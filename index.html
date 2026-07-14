@@ -144,17 +144,29 @@ const sky = new THREE.Mesh(
         col = mix(col, mix(sunsetHorizon*0.5, vec3(0.7,0.75,0.8), smoothstep(0.0,0.3,sunH)),
                   exp(-abs(h)*8.0)*0.25*(1.0-nightF*0.5));
 
-        // --- PREMIUM 3D-CELL STARS (night only) ---
+        // --- PREMIUM CUBE-MAPPED STARS (night only, no singularities/lines) ---
         if (nightF > 0.05 && h > 0.0) {
-          vec3 starPos = vDir * 230.0;
-          vec3 starCell = floor(starPos);
-          float starHash = hash2(starCell.xy + starCell.z * 37.0);
-          if (starHash > 0.9945) {
+          vec3 absDir = abs(vDir);
+          vec2 faceUV;
+          float faceIndex = 0.0;
+          if (absDir.x > absDir.y && absDir.x > absDir.z) {
+            faceUV = vDir.zy / (vDir.x + 0.0001);
+            faceIndex = 1.0;
+          } else if (absDir.y > absDir.x && absDir.y > absDir.z) {
+            faceUV = vDir.xz / (vDir.y + 0.0001);
+            faceIndex = 2.0;
+          } else {
+            faceUV = vDir.xy / (vDir.z + 0.0001);
+            faceIndex = 3.0;
+          }
+          vec2 starCell = floor(faceUV * 105.0);
+          float starHash = hash2(starCell + faceIndex * 47.0);
+          if (starHash > 0.9935) {
             float twinkle = 0.35 + 0.65 * sin(uTime * (1.2 + starHash * 1.8) + starHash * 80.0);
             float starSize = fract(starHash * 123.45);
             vec3 starColor = mix(vec3(0.7, 0.88, 1.0), vec3(1.0, 0.92, 0.82), step(0.5, starSize));
             starColor = mix(starColor, vec3(1.0), step(0.82, starSize));
-            col += starColor * (starSize * 0.75) * twinkle * nightF * pow(h, 0.25);
+            col += starColor * (starSize * 0.8) * twinkle * nightF * pow(h, 0.3);
           }
         }
 
