@@ -2,23 +2,314 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Doxibero City 3D</title>
+<title>Doxibero World</title>
+
+<!-- ============================================================
+     LANGUAGE: CSS3
+     Purpose: Premium glassmorphic HUD, animations, responsive UI
+     ============================================================ -->
 <style>
   html, body { margin: 0; overflow: hidden; background: #000; }
+
+  /* --- Glassmorphic HUD Panel --- */
   #hud {
-    position: fixed; top: 12px; left: 12px; color: #fff; font-family: Arial, sans-serif;
-    font-size: 14px; background: rgba(0,0,0,.4); padding: 8px 12px; border-radius: 8px;
-    pointer-events: none; text-shadow: 1px 1px 3px #000;
+    position: fixed; bottom: 14px; left: 14px;
+    color: #e0e8f0; font-family: 'Courier New', monospace; font-size: 12px;
+    background: linear-gradient(135deg, rgba(15,25,50,.55), rgba(10,15,35,.45));
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(120,160,255,.15);
+    padding: 10px 16px; border-radius: 10px;
+    pointer-events: none; line-height: 1.6; white-space: pre;
+    box-shadow: 0 4px 30px rgba(0,0,0,.35), inset 0 0 20px rgba(80,120,255,.04);
+    animation: hudFadeIn 1s ease-out;
+  }
+  #hud .label { color: #6a8ccc; }
+  #hud .value { color: #e8f0ff; font-weight: bold; }
+  #hud .grounded { color: #5ae85a; }
+  #hud .airborne { color: #e8a832; }
+
+  /* --- Physics Debug Overlay --- */
+  #debug {
+    position: fixed; top: 14px; right: 14px;
+    color: #8aa0c0; font-family: 'Courier New', monospace; font-size: 11px;
+    background: linear-gradient(135deg, rgba(10,15,30,.5), rgba(5,10,25,.4));
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(100,140,220,.12);
+    padding: 8px 14px; border-radius: 8px;
+    pointer-events: none; line-height: 1.5; white-space: pre;
+    box-shadow: 0 2px 20px rgba(0,0,0,.3);
+  }
+
+  /* --- Crosshair --- */
+  #crosshair {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    pointer-events: none; opacity: 0.35;
+  }
+
+  /* --- Animations --- */
+  @keyframes hudFadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
 </style>
 </head>
 <body>
-<div id="hud">WASD move · Mouse look</div>
+
+<!-- ============================================================
+     LANGUAGE: HTML5 + SVG
+     Purpose: Structure, scalable vector crosshair icon
+     ============================================================ -->
+<div id="hud"></div>
+<div id="debug"></div>
+
+<!-- SVG crosshair — scales perfectly at any resolution -->
+<svg id="crosshair" width="24" height="24" viewBox="0 0 24 24">
+  <circle cx="12" cy="12" r="3" fill="none" stroke="#ffffff" stroke-width="1"/>
+  <line x1="12" y1="2" x2="12" y2="8" stroke="#ffffff" stroke-width="1"/>
+  <line x1="12" y1="16" x2="12" y2="22" stroke="#ffffff" stroke-width="1"/>
+  <line x1="2" y1="12" x2="8" y2="12" stroke="#ffffff" stroke-width="1"/>
+  <line x1="16" y1="12" x2="22" y2="12" stroke="#ffffff" stroke-width="1"/>
+</svg>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script>
 
 /* ============================================================
+   LANGUAGE: JAVASCRIPT
+   SECTION: WORLD CONSTANTS
+   All physics and world rules. Change one → whole world changes.
+   ============================================================ */
+var WORLD = {
+  // --- Gravity & Forces ---
+  GRAVITY:         9.81,       // m/s² — Earth-like
+  AIR_DENSITY:     1.225,      // kg/m³
+  DRAG_COEFF:      0.47,       // default sphere drag
+  WIND:            { x: 0, y: 0, z: 0 },
+
+  // --- Ground & Terrain ---
+  GROUND_Y:        0,
+  GROUND_FRICTION: 0.6,
+  GROUND_BOUNCE:   0.3,
+
+  // --- World Bounds ---
+  SIZE:            400,        // meters
+  BOUNDARY:        'soft',     // 'hard' | 'soft' | 'wrap'
+
+  // --- Time ---
+  MAX_DT:          0.05,
+  SUBSTEPS:        2,
+
+  // --- Collision ---
+  RESTITUTION:     0.4,
+  MIN_VELOCITY:    0.01,
+
+  // --- Sky / Environment ---
+  SUN_AZIMUTH:     0.8,       // radians — sun horizontal angle
+  SUN_ELEVATION:   0.45,      // 0 = horizon, 1 = overhead
+  TIME_OF_DAY:     0.65       // 0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset
+};
+
+/* ============================================================
+   LANGUAGE: JAVASCRIPT
+   SECTION: VECTOR MATH
+   ============================================================ */
+var VMath = {
+  dist: function(a, b) {
+    var dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  },
+  distXZ: function(a, b) {
+    var dx = b.x - a.x, dz = b.z - a.z;
+    return Math.sqrt(dx * dx + dz * dz);
+  },
+  len: function(v) {
+    return Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+  },
+  lenXZ: function(v) {
+    return Math.sqrt(v.x * v.x + v.z * v.z);
+  },
+  normalize: function(v) {
+    var l = VMath.len(v);
+    if (l < 0.0001) return { x: 0, y: 0, z: 0 };
+    return { x: v.x / l, y: v.y / l, z: v.z / l };
+  },
+  dot: function(a, b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+  },
+  cross: function(a, b) {
+    return {
+      x: a.y * b.z - a.z * b.y,
+      y: a.z * b.x - a.x * b.z,
+      z: a.x * b.y - a.y * b.x
+    };
+  },
+  scale: function(v, s) {
+    return { x: v.x * s, y: v.y * s, z: v.z * s };
+  },
+  add: function(a, b) {
+    return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
+  },
+  sub: function(a, b) {
+    return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+  },
+  clamp: function(val, min, max) {
+    return Math.max(min, Math.min(max, val));
+  },
+  lerp: function(a, b, t) {
+    return a + (b - a) * t;
+  },
+  wrapAngle: function(a) {
+    while (a > Math.PI)  a -= 2 * Math.PI;
+    while (a < -Math.PI) a += 2 * Math.PI;
+    return a;
+  },
+  reflect: function(v, normal) {
+    var d = VMath.dot(v, normal) * 2;
+    return { x: v.x - d * normal.x, y: v.y - d * normal.y, z: v.z - d * normal.z };
+  },
+  rotateY: function(v, angle) {
+    var c = Math.cos(angle), s = Math.sin(angle);
+    return { x: v.x * c - v.z * s, y: v.y, z: v.x * s + v.z * c };
+  }
+};
+
+/* ============================================================
+   LANGUAGE: JAVASCRIPT
+   SECTION: PHYSICS ENGINE
+   ============================================================ */
+var Physics = {
+  step: function(entity, dt) {
+    var halfSize = WORLD.SIZE / 2;
+
+    // 1. GRAVITY
+    entity.vel.y -= WORLD.GRAVITY * dt;
+
+    // 2. AIR DRAG: F = 0.5 * ρ * v² * Cd * A
+    var speed = VMath.len(entity.vel);
+    if (speed > WORLD.MIN_VELOCITY) {
+      var area = Math.PI * entity.radius * entity.radius;
+      var dragForce = 0.5 * WORLD.AIR_DENSITY * speed * speed * entity.dragCoeff * area;
+      var dragAccel = dragForce / entity.mass;
+      var dragDt = Math.min(dragAccel * dt, speed);
+      var dragDir = VMath.normalize(entity.vel);
+      entity.vel.x -= dragDir.x * dragDt;
+      entity.vel.y -= dragDir.y * dragDt;
+      entity.vel.z -= dragDir.z * dragDt;
+    }
+
+    // 3. WIND
+    if (WORLD.WIND.x || WORLD.WIND.y || WORLD.WIND.z) {
+      var area2 = Math.PI * entity.radius * entity.radius;
+      var windForce = 0.5 * WORLD.AIR_DENSITY * area2 * 0.3;
+      entity.vel.x += (WORLD.WIND.x * windForce / entity.mass) * dt;
+      entity.vel.z += (WORLD.WIND.z * windForce / entity.mass) * dt;
+    }
+
+    // 4. INTEGRATE POSITION
+    entity.pos.x += entity.vel.x * dt;
+    entity.pos.y += entity.vel.y * dt;
+    entity.pos.z += entity.vel.z * dt;
+
+    // 5. GROUND COLLISION
+    entity.grounded = false;
+    if (entity.pos.y <= WORLD.GROUND_Y + entity.radius) {
+      entity.pos.y = WORLD.GROUND_Y + entity.radius;
+      if (entity.vel.y < -0.5) {
+        entity.vel.y *= -entity.bounce;
+      } else {
+        entity.vel.y = 0;
+      }
+      var fric = 1 - entity.friction * dt * 10;
+      fric = VMath.clamp(fric, 0, 1);
+      entity.vel.x *= fric;
+      entity.vel.z *= fric;
+      entity.grounded = true;
+    }
+
+    // 6. WORLD BOUNDARIES
+    if (WORLD.BOUNDARY === 'hard') {
+      if (entity.pos.x < -halfSize + entity.radius) { entity.pos.x = -halfSize + entity.radius; entity.vel.x = Math.abs(entity.vel.x) * entity.bounce; }
+      if (entity.pos.x >  halfSize - entity.radius) { entity.pos.x =  halfSize - entity.radius; entity.vel.x = -Math.abs(entity.vel.x) * entity.bounce; }
+      if (entity.pos.z < -halfSize + entity.radius) { entity.pos.z = -halfSize + entity.radius; entity.vel.z = Math.abs(entity.vel.z) * entity.bounce; }
+      if (entity.pos.z >  halfSize - entity.radius) { entity.pos.z =  halfSize - entity.radius; entity.vel.z = -Math.abs(entity.vel.z) * entity.bounce; }
+    } else if (WORLD.BOUNDARY === 'soft') {
+      var push = 20;
+      if (entity.pos.x < -halfSize + 2) entity.vel.x += push * dt;
+      if (entity.pos.x >  halfSize - 2) entity.vel.x -= push * dt;
+      if (entity.pos.z < -halfSize + 2) entity.vel.z += push * dt;
+      if (entity.pos.z >  halfSize - 2) entity.vel.z -= push * dt;
+    } else if (WORLD.BOUNDARY === 'wrap') {
+      if (entity.pos.x < -halfSize) entity.pos.x += WORLD.SIZE;
+      if (entity.pos.x >  halfSize) entity.pos.x -= WORLD.SIZE;
+      if (entity.pos.z < -halfSize) entity.pos.z += WORLD.SIZE;
+      if (entity.pos.z >  halfSize) entity.pos.z -= WORLD.SIZE;
+    }
+
+    // 7. KILL MICRO-JITTER
+    if (Math.abs(entity.vel.x) < WORLD.MIN_VELOCITY) entity.vel.x = 0;
+    if (Math.abs(entity.vel.y) < WORLD.MIN_VELOCITY) entity.vel.y = 0;
+    if (Math.abs(entity.vel.z) < WORLD.MIN_VELOCITY) entity.vel.z = 0;
+  },
+
+  collide: function(a, b) {
+    var diff = VMath.sub(b.pos, a.pos);
+    var dist = VMath.len(diff);
+    var minDist = a.radius + b.radius;
+    if (dist < minDist && dist > 0.001) {
+      var normal = VMath.scale(diff, 1 / dist);
+      var overlap = minDist - dist;
+      var totalMass = a.mass + b.mass;
+      a.pos.x -= normal.x * overlap * (b.mass / totalMass);
+      a.pos.y -= normal.y * overlap * (b.mass / totalMass);
+      a.pos.z -= normal.z * overlap * (b.mass / totalMass);
+      b.pos.x += normal.x * overlap * (a.mass / totalMass);
+      b.pos.y += normal.y * overlap * (a.mass / totalMass);
+      b.pos.z += normal.z * overlap * (a.mass / totalMass);
+      var relVel = VMath.sub(a.vel, b.vel);
+      var velAlongNormal = VMath.dot(relVel, normal);
+      if (velAlongNormal > 0) return false;
+      var restitution = Math.min(a.bounce, b.bounce);
+      var impulse = -(1 + restitution) * velAlongNormal / totalMass;
+      a.vel.x += impulse * b.mass * normal.x;
+      a.vel.y += impulse * b.mass * normal.y;
+      a.vel.z += impulse * b.mass * normal.z;
+      b.vel.x -= impulse * a.mass * normal.x;
+      b.vel.y -= impulse * a.mass * normal.y;
+      b.vel.z -= impulse * a.mass * normal.z;
+      return true;
+    }
+    return false;
+  }
+};
+
+/* ============================================================
+   LANGUAGE: JAVASCRIPT
+   SECTION: ENTITY REGISTRY
+   ============================================================ */
+var entities = [];
+
+function createEntity(options) {
+  var e = {
+    pos:       options.pos       || { x: 0, y: 5, z: 0 },
+    vel:       options.vel       || { x: 0, y: 0, z: 0 },
+    mass:      options.mass      || 1,
+    radius:    options.radius    || 0.5,
+    friction:  options.friction  || WORLD.GROUND_FRICTION,
+    bounce:    options.bounce    || WORLD.GROUND_BOUNCE,
+    dragCoeff: options.dragCoeff || WORLD.DRAG_COEFF,
+    grounded:  false,
+    heading:   options.heading   || 0,
+    type:      options.type      || 'generic',
+    mesh:      options.mesh      || null,
+    dynamic:   options.dynamic !== undefined ? options.dynamic : true,
+    data:      options.data      || {}
+  };
+  entities.push(e);
+  return e;
+}
+
+/* ============================================================
+   LANGUAGE: JAVASCRIPT
    SECTION: RENDERER
    ============================================================ */
 var renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -27,20 +318,154 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
 
 /* ============================================================
+   LANGUAGE: JAVASCRIPT
    SECTION: SCENE
    ============================================================ */
 var scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb);
-scene.fog = new THREE.Fog(0x87ceeb, 100, 400);
 
 /* ============================================================
+   LANGUAGE: GLSL (OpenGL Shading Language)
+   SECTION: SKY SHADER
+   Purpose: GPU-rendered procedural sky with atmosphere scattering,
+   sun disk, clouds, and day/night cycle. Runs entirely on the
+   graphics card — zero CPU cost.
+   ============================================================ */
+var skyVertexShader = [
+  'varying vec3 vWorldPos;',
+  'void main() {',
+  '  vec4 worldPos = modelMatrix * vec4(position, 1.0);',
+  '  vWorldPos = worldPos.xyz;',
+  '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+  '}'
+].join('\n');
+
+var skyFragmentShader = [
+  'uniform vec3 uSunDir;',
+  'uniform float uTime;',
+  'varying vec3 vWorldPos;',
+
+  // --- Hash & noise for procedural clouds ---
+  'float hash(vec2 p) {',
+  '  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);',
+  '}',
+
+  'float noise(vec2 p) {',
+  '  vec2 i = floor(p);',
+  '  vec2 f = fract(p);',
+  '  f = f * f * (3.0 - 2.0 * f);', // smoothstep
+  '  float a = hash(i);',
+  '  float b = hash(i + vec2(1.0, 0.0));',
+  '  float c = hash(i + vec2(0.0, 1.0));',
+  '  float d = hash(i + vec2(1.0, 1.0));',
+  '  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);',
+  '}',
+
+  'float fbm(vec2 p) {',
+  '  float v = 0.0, a = 0.5;',
+  '  mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);',
+  '  for (int i = 0; i < 5; i++) {',
+  '    v += a * noise(p);',
+  '    p = rot * p * 2.0;',
+  '    a *= 0.5;',
+  '  }',
+  '  return v;',
+  '}',
+
+  'void main() {',
+  '  vec3 dir = normalize(vWorldPos - cameraPosition);',
+  '  float y = dir.y;',
+
+  '  // --- Atmosphere Rayleigh scattering approximation ---',
+  '  float sunDot = max(dot(dir, uSunDir), 0.0);',
+  '  float sunHeight = uSunDir.y;',
+
+  '  // Sky gradient: blue overhead → warm at horizon',
+  '  vec3 zenith = vec3(0.15, 0.35, 0.85);',
+  '  vec3 horizon = vec3(0.55, 0.65, 0.8);',
+  '  vec3 sunset = vec3(1.0, 0.45, 0.15);',
+
+  '  // Shift colors based on sun elevation',
+  '  float sunsetFactor = smoothstep(0.0, 0.3, sunHeight) * (1.0 - smoothstep(0.3, 0.6, sunHeight));',
+  '  horizon = mix(sunset, horizon, smoothstep(0.0, 0.35, sunHeight));',
+
+  '  float t = smoothstep(-0.05, 0.5, y);',
+  '  vec3 sky = mix(horizon, zenith, t);',
+
+  '  // Night sky',
+  '  vec3 nightZenith = vec3(0.02, 0.03, 0.08);',
+  '  vec3 nightHorizon = vec3(0.04, 0.05, 0.12);',
+  '  vec3 nightSky = mix(nightHorizon, nightZenith, t);',
+  '  float nightFactor = 1.0 - smoothstep(-0.1, 0.15, sunHeight);',
+  '  sky = mix(sky, nightSky, nightFactor);',
+
+  '  // --- Sun disk ---',
+  '  float sunGlow = pow(sunDot, 256.0);',       // hard sun disk
+  '  float sunHalo = pow(sunDot, 8.0) * 0.35;',  // soft glow around sun
+  '  vec3 sunColor = mix(vec3(1.0, 0.5, 0.2), vec3(1.0, 0.95, 0.8), smoothstep(0.1, 0.5, sunHeight));',
+  '  sky += sunColor * sunGlow + sunColor * sunHalo;',
+
+  '  // --- Stars at night ---',
+  '  if (nightFactor > 0.1) {',
+  '    float stars = step(0.997, hash(floor(dir.xz * 300.0 + dir.y * 300.0)));',
+  '    float twinkle = 0.7 + 0.3 * sin(uTime * 3.0 + hash(floor(dir.xz * 300.0)) * 50.0);',
+  '    sky += vec3(stars * nightFactor * twinkle);',
+  '  }',
+
+  '  // --- Procedural clouds ---',
+  '  if (y > 0.0) {',
+  '    vec2 cloudUV = dir.xz / (y + 0.1) * 3.0 + uTime * 0.02;',
+  '    float cloud = fbm(cloudUV);',
+  '    cloud = smoothstep(0.35, 0.65, cloud);',
+  '    float cloudBrightness = mix(0.15, 1.0, smoothstep(-0.05, 0.3, sunHeight));',
+  '    vec3 cloudColor = vec3(cloudBrightness) * mix(vec3(1.0, 0.7, 0.5), vec3(1.0), smoothstep(0.1, 0.4, sunHeight));',
+  '    sky = mix(sky, cloudColor, cloud * 0.55 * smoothstep(0.0, 0.15, y));',
+  '  }',
+
+  '  // --- Ground fog at horizon ---',
+  '  float fogFactor = exp(-abs(y) * 8.0) * 0.25;',
+  '  vec3 fogColor = mix(sunset * 0.5, vec3(0.7, 0.75, 0.8), smoothstep(0.1, 0.5, sunHeight));',
+  '  sky = mix(sky, fogColor, fogFactor);',
+
+  '  gl_FragColor = vec4(sky, 1.0);',
+  '}'
+].join('\n');
+
+// Sun direction computed from world constants
+function getSunDir() {
+  var elev = WORLD.SUN_ELEVATION * Math.PI / 2;
+  var azim = WORLD.SUN_AZIMUTH;
+  return new THREE.Vector3(
+    Math.cos(elev) * Math.sin(azim),
+    Math.sin(elev),
+    Math.cos(elev) * Math.cos(azim)
+  ).normalize();
+}
+
+var skyUniforms = {
+  uSunDir: { value: getSunDir() },
+  uTime:   { value: 0 }
+};
+
+var skyMaterial = new THREE.ShaderMaterial({
+  vertexShader: skyVertexShader,
+  fragmentShader: skyFragmentShader,
+  uniforms: skyUniforms,
+  side: THREE.BackSide,
+  depthWrite: false
+});
+
+var skyDome = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 24), skyMaterial);
+scene.add(skyDome);
+
+/* ============================================================
+   LANGUAGE: JAVASCRIPT
    SECTION: CAMERA
    ============================================================ */
 var camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.1, 700);
-camera.position.set(0, 5, 10);
 
 window.addEventListener('resize', function() {
   camera.aspect = innerWidth / innerHeight;
@@ -49,13 +474,15 @@ window.addEventListener('resize', function() {
 });
 
 /* ============================================================
-   SECTION: LIGHTING
+   LANGUAGE: JAVASCRIPT
+   SECTION: LIGHTING (synced to sky shader sun)
    ============================================================ */
 var hemiLight = new THREE.HemisphereLight(0xbfd9ff, 0x3f5a36, 0.7);
 scene.add(hemiLight);
 
 var sunLight = new THREE.DirectionalLight(0xfff2d9, 1.6);
-sunLight.position.set(50, 100, 30);
+var sunDir = getSunDir();
+sunLight.position.set(sunDir.x * 100, sunDir.y * 100, sunDir.z * 100);
 sunLight.castShadow = true;
 sunLight.shadow.mapSize.set(2048, 2048);
 sunLight.shadow.camera.left = -90;
@@ -68,104 +495,313 @@ scene.add(sunLight);
 scene.add(sunLight.target);
 
 /* ============================================================
-   SECTION: GROUND
+   LANGUAGE: GLSL
+   SECTION: GROUND SHADER
+   Purpose: Procedural ground with grid lines and distance fade.
+   Infinite detail, no texture memory.
    ============================================================ */
-var WORLD_SIZE = 400;
+var groundVertShader = [
+  'varying vec2 vUv;',
+  'varying vec3 vWorldPos;',
+  'void main() {',
+  '  vUv = uv;',
+  '  vec4 wp = modelMatrix * vec4(position, 1.0);',
+  '  vWorldPos = wp.xyz;',
+  '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+  '}'
+].join('\n');
 
-var groundGeo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
-var groundMat = new THREE.MeshStandardMaterial({ color: 0x4a7a3a, roughness: 0.95 });
-var ground = new THREE.Mesh(groundGeo, groundMat);
-ground.rotation.x = -Math.PI / 2;
-ground.receiveShadow = true;
-scene.add(ground);
+var groundFragShader = [
+  'varying vec2 vUv;',
+  'varying vec3 vWorldPos;',
+  'uniform float uSize;',
 
-/* ============================================================
-   SECTION: PLAYER
-   ============================================================ */
-var playerGeo = new THREE.BoxGeometry(1, 2, 1);
-var playerMat = new THREE.MeshStandardMaterial({ color: 0x3388ff });
-var playerMesh = new THREE.Mesh(playerGeo, playerMat);
-playerMesh.castShadow = true;
-playerMesh.position.y = 1;
-scene.add(playerMesh);
+  'void main() {',
+  '  // Base ground color',
+  '  vec3 baseColor = vec3(0.28, 0.48, 0.22);',
 
-var player = {
-  x: 0,
-  z: 0,
-  y: 0,
-  heading: 0,
-  speed: 6
+  '  // Subtle procedural grass variation',
+  '  float n = fract(sin(dot(floor(vWorldPos.xz * 0.5), vec2(12.9898, 78.233))) * 43758.5453);',
+  '  baseColor += (n - 0.5) * 0.06;',
+
+  '  // Grid lines every 10m (faint) and 50m (visible)',
+  '  vec2 grid10 = abs(fract(vWorldPos.xz / 10.0 - 0.5) - 0.5) / fwidth(vWorldPos.xz / 10.0);',
+  '  float line10 = min(grid10.x, grid10.y);',
+  '  float grid10Factor = 1.0 - min(line10, 1.0);',
+
+  '  vec2 grid50 = abs(fract(vWorldPos.xz / 50.0 - 0.5) - 0.5) / fwidth(vWorldPos.xz / 50.0);',
+  '  float line50 = min(grid50.x, grid50.y);',
+  '  float grid50Factor = 1.0 - min(line50, 1.0);',
+
+  '  baseColor = mix(baseColor, vec3(0.22, 0.40, 0.18), grid10Factor * 0.25);',
+  '  baseColor = mix(baseColor, vec3(0.18, 0.35, 0.15), grid50Factor * 0.5);',
+
+  '  // Distance fade to fog',
+  '  float dist = length(vWorldPos.xz);',
+  '  float fade = smoothstep(uSize * 0.3, uSize * 0.5, dist);',
+  '  vec3 fogColor = vec3(0.55, 0.65, 0.5);',
+  '  baseColor = mix(baseColor, fogColor, fade);',
+
+  '  gl_FragColor = vec4(baseColor, 1.0);',
+  '}'
+].join('\n');
+
+var groundUniforms = {
+  uSize: { value: WORLD.SIZE }
 };
 
+var groundMaterial = new THREE.ShaderMaterial({
+  vertexShader: groundVertShader,
+  fragmentShader: groundFragShader,
+  uniforms: groundUniforms
+});
+
+var groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(WORLD.SIZE, WORLD.SIZE, 1, 1), groundMaterial);
+groundMesh.rotation.x = -Math.PI / 2;
+groundMesh.receiveShadow = true;
+scene.add(groundMesh);
+
 /* ============================================================
+   LANGUAGE: JAVASCRIPT
+   SECTION: PLAYER
+   ============================================================ */
+var playerGeo = new THREE.BoxGeometry(0.8, 1.8, 0.8);
+var playerMatl = new THREE.MeshStandardMaterial({ color: 0x3388ff });
+var playerMesh = new THREE.Mesh(playerGeo, playerMatl);
+playerMesh.castShadow = true;
+scene.add(playerMesh);
+
+var player = createEntity({
+  type: 'player',
+  pos: { x: 0, y: 0.9, z: 0 },
+  vel: { x: 0, y: 0, z: 0 },
+  mass: 75,
+  radius: 0.5,
+  friction: 0.7,
+  bounce: 0.1,
+  dragCoeff: 1.0,
+  mesh: playerMesh,
+  dynamic: true
+});
+
+var PLAYER_WALK_FORCE = 600;
+var PLAYER_RUN_FORCE  = 1200;
+var PLAYER_MAX_WALK   = 5;
+var PLAYER_MAX_RUN    = 9;
+var PLAYER_JUMP_VEL   = 6;
+
+/* ============================================================
+   LANGUAGE: JAVASCRIPT
    SECTION: INPUT
    ============================================================ */
 var keys = {};
 window.addEventListener('keydown', function(e) {
   keys[e.key.toLowerCase()] = true;
+  if (e.key === ' ') e.preventDefault();
 });
 window.addEventListener('keyup', function(e) {
   keys[e.key.toLowerCase()] = false;
 });
 
 /* ============================================================
+   LANGUAGE: JAVASCRIPT + WEB AUDIO API
+   SECTION: AUDIO ENGINE
+   Procedural sound synthesis — no audio files needed.
+   ============================================================ */
+var AudioEngine = {
+  ctx: null,
+  masterGain: null,
+
+  init: function() {
+    if (this.ctx) return;
+    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    this.masterGain = this.ctx.createGain();
+    this.masterGain.gain.value = 0.3;
+    this.masterGain.connect(this.ctx.destination);
+  },
+
+  // Play a short impact sound (pitch based on force)
+  impact: function(force) {
+    if (!this.ctx) return;
+    var osc = this.ctx.createOscillator();
+    var gain = this.ctx.createGain();
+    var filter = this.ctx.createBiquadFilter();
+    osc.type = 'triangle';
+    osc.frequency.value = 80 + force * 10;
+    osc.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.15);
+    filter.type = 'lowpass';
+    filter.frequency.value = 300 + force * 50;
+    gain.gain.value = Math.min(0.4, force * 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.2);
+    osc.connect(filter).connect(gain).connect(this.masterGain);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.25);
+  },
+
+  // Footstep sound
+  footstep: function(speed) {
+    if (!this.ctx) return;
+    var bufferSize = this.ctx.sampleRate * 0.06;
+    var buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    var data = buffer.getChannelData(0);
+    for (var i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.15));
+    }
+    var source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    var filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 400 + speed * 40;
+    var gain = this.ctx.createGain();
+    gain.gain.value = 0.08;
+    source.connect(filter).connect(gain).connect(this.masterGain);
+    source.start();
+  }
+};
+
+// Init audio on first interaction
+window.addEventListener('keydown', function() { AudioEngine.init(); }, { once: true });
+window.addEventListener('click', function() { AudioEngine.init(); }, { once: true });
+
+/* ============================================================
+   LANGUAGE: JAVASCRIPT
+   SECTION: FOOTSTEP TIMER
+   ============================================================ */
+var footstepTimer = 0;
+
+/* ============================================================
+   LANGUAGE: JAVASCRIPT
    SECTION: UPDATE
    ============================================================ */
-function update(dt) {
-  // turning
+function update(dt, time) {
+  // --- Player Control ---
+  var running = keys['shift'];
+  var force = running ? PLAYER_RUN_FORCE : PLAYER_WALK_FORCE;
+  var maxSpeed = running ? PLAYER_MAX_RUN : PLAYER_MAX_WALK;
+
   if (keys['a'] || keys['arrowleft'])  player.heading += 2.5 * dt;
   if (keys['d'] || keys['arrowright']) player.heading -= 2.5 * dt;
 
-  // movement
-  var move = 0;
-  if (keys['w'] || keys['arrowup'])   move = 1;
-  if (keys['s'] || keys['arrowdown']) move = -0.6;
+  var moveDir = 0;
+  if (keys['w'] || keys['arrowup'])   moveDir = 1;
+  if (keys['s'] || keys['arrowdown']) moveDir = -0.6;
 
-  if (move) {
-    player.x += Math.cos(player.heading) * player.speed * move * dt;
-    player.z -= Math.sin(player.heading) * player.speed * move * dt;
+  if (moveDir && player.grounded) {
+    var fx = Math.cos(player.heading) * force * moveDir / player.mass;
+    var fz = -Math.sin(player.heading) * force * moveDir / player.mass;
+    var currentSpeed = VMath.lenXZ(player.vel);
+    if (currentSpeed < maxSpeed) {
+      player.vel.x += fx * dt;
+      player.vel.z += fz * dt;
+    }
+
+    // footstep audio
+    footstepTimer -= dt;
+    if (footstepTimer <= 0) {
+      footstepTimer = running ? 0.28 : 0.45;
+      AudioEngine.footstep(currentSpeed);
+    }
+  } else {
+    footstepTimer = 0;
   }
 
-  // clamp to world
-  var half = WORLD_SIZE / 2 - 1;
-  player.x = Math.max(-half, Math.min(half, player.x));
-  player.z = Math.max(-half, Math.min(half, player.z));
+  if (keys[' '] && player.grounded) {
+    player.vel.y = PLAYER_JUMP_VEL;
+    player.grounded = false;
+  }
 
-  // update mesh
-  playerMesh.position.set(player.x, 1, player.z);
-  playerMesh.rotation.y = player.heading - Math.PI / 2;
+  // --- Physics Substeps ---
+  var subDt = dt / WORLD.SUBSTEPS;
+  for (var s = 0; s < WORLD.SUBSTEPS; s++) {
+    for (var i = 0; i < entities.length; i++) {
+      if (entities[i].dynamic) Physics.step(entities[i], subDt);
+    }
+    for (var i = 0; i < entities.length; i++) {
+      for (var j = i + 1; j < entities.length; j++) {
+        if (entities[i].dynamic || entities[j].dynamic) {
+          if (Physics.collide(entities[i], entities[j])) {
+            var impactForce = VMath.len(VMath.sub(entities[i].vel, entities[j].vel));
+            if (impactForce > 2) AudioEngine.impact(impactForce);
+          }
+        }
+      }
+    }
+  }
 
-  // camera follow
+  // --- Sync Meshes ---
+  for (var i = 0; i < entities.length; i++) {
+    var e = entities[i];
+    if (e.mesh) {
+      e.mesh.position.set(e.pos.x, e.pos.y, e.pos.z);
+      e.mesh.rotation.y = e.heading - Math.PI / 2;
+    }
+  }
+
+  // --- Camera Follow ---
   var camDist = 8, camHeight = 5;
-  var cx = player.x - Math.cos(player.heading) * camDist;
-  var cz = player.z + Math.sin(player.heading) * camDist;
-  camera.position.lerp(new THREE.Vector3(cx, camHeight, cz), Math.min(1, 5 * dt));
-  camera.lookAt(player.x, 1.5, player.z);
+  var cx = player.pos.x - Math.cos(player.heading) * camDist;
+  var cz = player.pos.z + Math.sin(player.heading) * camDist;
+  camera.position.lerp(new THREE.Vector3(cx, player.pos.y + camHeight, cz), Math.min(1, 5 * dt));
+  camera.lookAt(player.pos.x, player.pos.y + 0.5, player.pos.z);
 
-  // sun follows player
-  sunLight.position.set(player.x + 50, 100, player.z + 30);
-  sunLight.target.position.set(player.x, 0, player.z);
+  // --- Sky dome follows camera ---
+  skyDome.position.copy(camera.position);
+  skyUniforms.uTime.value = time;
+
+  // --- Sun follows player ---
+  sunLight.position.set(player.pos.x + sunDir.x * 100, sunDir.y * 100, player.pos.z + sunDir.z * 100);
+  sunLight.target.position.set(player.pos.x, 0, player.pos.z);
 }
 
 /* ============================================================
+   LANGUAGE: JAVASCRIPT + HTML
    SECTION: HUD UPDATE
    ============================================================ */
 var hudEl = document.getElementById('hud');
-function updateHUD() {
-  hudEl.textContent = 'WASD move · A/D turn';
+var debugEl = document.getElementById('debug');
+var hudTimer = 0;
+
+function updateHUD(dt) {
+  hudTimer += dt;
+  if (hudTimer < 0.15) return;
+  hudTimer = 0;
+
+  var speed = VMath.len(player.vel);
+  var kmh = (speed * 3.6).toFixed(1);
+  var alt = (player.pos.y - player.radius).toFixed(2);
+  var state = player.grounded;
+
+  hudEl.innerHTML =
+    '<span class="label">SPD</span> <span class="value">' + kmh + ' km/h</span>  ' +
+    '<span class="label">ALT</span> <span class="value">' + alt + ' m</span>  ' +
+    '<span class="' + (state ? 'grounded' : 'airborne') + '">' + (state ? '● GROUND' : '● AIR') + '</span>' +
+    '\n<span class="label">W/S</span> move  <span class="label">A/D</span> turn  ' +
+    '<span class="label">Shift</span> run  <span class="label">Space</span> jump';
+
+  debugEl.innerHTML =
+    '┌─ WORLD PHYSICS ─────────┐\n' +
+    '│ Gravity:  ' + WORLD.GRAVITY.toFixed(2) + ' m/s²       │\n' +
+    '│ Air ρ:    ' + WORLD.AIR_DENSITY.toFixed(3) + ' kg/m³    │\n' +
+    '│ Friction: ' + WORLD.GROUND_FRICTION.toFixed(2) + '            │\n' +
+    '│ Bounce:   ' + WORLD.GROUND_BOUNCE.toFixed(2) + '            │\n' +
+    '│ Entities: ' + entities.length + '               │\n' +
+    '│ Boundary: ' + WORLD.BOUNDARY + '            │\n' +
+    '└─────────────────────────┘';
 }
 
 /* ============================================================
+   LANGUAGE: JAVASCRIPT
    SECTION: GAME LOOP
    ============================================================ */
 var lastTime = performance.now();
 
 function gameLoop(now) {
-  var dt = Math.min(0.05, (now - lastTime) / 1000);
+  var rawDt = (now - lastTime) / 1000;
+  var dt = Math.min(WORLD.MAX_DT, rawDt);
   lastTime = now;
 
-  update(dt);
-  updateHUD();
+  update(dt, now / 1000);
+  updateHUD(dt);
   renderer.render(scene, camera);
   requestAnimationFrame(gameLoop);
 }
