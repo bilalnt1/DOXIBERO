@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Doxibero City 3D</title>
+<style>
+  html, body { margin: 0; overflow: hidden; background: #000; }
+  #hud {
+    position: fixed; top: 12px; left: 12px; color: #fff; font-family: Arial, sans-serif;
+    font-size: 14px; background: rgba(0,0,0,.4); padding: 8px 12px; border-radius: 8px;
+    pointer-events: none; text-shadow: 1px 1px 3px #000;
+  }
+</style>
+</head>
+<body>
+<div id="hud">WASD move · Mouse look</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+
+/* ============================================================
+   SECTION: RENDERER
+   ============================================================ */
+var renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+/* ============================================================
+   SECTION: SCENE
+   ============================================================ */
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 100, 400);
+
+/* ============================================================
+   SECTION: CAMERA
+   ============================================================ */
+var camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.1, 700);
+camera.position.set(0, 5, 10);
+
+window.addEventListener('resize', function() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ============================================================
+   SECTION: LIGHTING
+   ============================================================ */
+var hemiLight = new THREE.HemisphereLight(0xbfd9ff, 0x3f5a36, 0.7);
+scene.add(hemiLight);
+
+var sunLight = new THREE.DirectionalLight(0xfff2d9, 1.6);
+sunLight.position.set(50, 100, 30);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(2048, 2048);
+sunLight.shadow.camera.left = -90;
+sunLight.shadow.camera.right = 90;
+sunLight.shadow.camera.top = 90;
+sunLight.shadow.camera.bottom = -90;
+sunLight.shadow.camera.far = 400;
+sunLight.shadow.bias = -0.0004;
+scene.add(sunLight);
+scene.add(sunLight.target);
+
+/* ============================================================
+   SECTION: GROUND
+   ============================================================ */
+var WORLD_SIZE = 400;
+
+var groundGeo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
+var groundMat = new THREE.MeshStandardMaterial({ color: 0x4a7a3a, roughness: 0.95 });
+var ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* ============================================================
+   SECTION: PLAYER
+   ============================================================ */
+var playerGeo = new THREE.BoxGeometry(1, 2, 1);
+var playerMat = new THREE.MeshStandardMaterial({ color: 0x3388ff });
+var playerMesh = new THREE.Mesh(playerGeo, playerMat);
+playerMesh.castShadow = true;
+playerMesh.position.y = 1;
+scene.add(playerMesh);
+
+var player = {
+  x: 0,
+  z: 0,
+  y: 0,
+  heading: 0,
+  speed: 6
+};
+
+/* ============================================================
+   SECTION: INPUT
+   ============================================================ */
+var keys = {};
+window.addEventListener('keydown', function(e) {
+  keys[e.key.toLowerCase()] = true;
+});
+window.addEventListener('keyup', function(e) {
+  keys[e.key.toLowerCase()] = false;
+});
+
+/* ============================================================
+   SECTION: UPDATE
+   ============================================================ */
+function update(dt) {
+  // turning
+  if (keys['a'] || keys['arrowleft'])  player.heading += 2.5 * dt;
+  if (keys['d'] || keys['arrowright']) player.heading -= 2.5 * dt;
+
+  // movement
+  var move = 0;
+  if (keys['w'] || keys['arrowup'])   move = 1;
+  if (keys['s'] || keys['arrowdown']) move = -0.6;
+
+  if (move) {
+    player.x += Math.cos(player.heading) * player.speed * move * dt;
+    player.z -= Math.sin(player.heading) * player.speed * move * dt;
+  }
+
+  // clamp to world
+  var half = WORLD_SIZE / 2 - 1;
+  player.x = Math.max(-half, Math.min(half, player.x));
+  player.z = Math.max(-half, Math.min(half, player.z));
+
+  // update mesh
+  playerMesh.position.set(player.x, 1, player.z);
+  playerMesh.rotation.y = player.heading - Math.PI / 2;
+
+  // camera follow
+  var camDist = 8, camHeight = 5;
+  var cx = player.x - Math.cos(player.heading) * camDist;
+  var cz = player.z + Math.sin(player.heading) * camDist;
+  camera.position.lerp(new THREE.Vector3(cx, camHeight, cz), Math.min(1, 5 * dt));
+  camera.lookAt(player.x, 1.5, player.z);
+
+  // sun follows player
+  sunLight.position.set(player.x + 50, 100, player.z + 30);
+  sunLight.target.position.set(player.x, 0, player.z);
+}
+
+/* ============================================================
+   SECTION: HUD UPDATE
+   ============================================================ */
+var hudEl = document.getElementById('hud');
+function updateHUD() {
+  hudEl.textContent = 'WASD move · A/D turn';
+}
+
+/* ============================================================
+   SECTION: GAME LOOP
+   ============================================================ */
+var lastTime = performance.now();
+
+function gameLoop(now) {
+  var dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+
+  update(dt);
+  updateHUD();
+  renderer.render(scene, camera);
+  requestAnimationFrame(gameLoop);
+}
+
+requestAnimationFrame(gameLoop);
+
+</script>
+</body>
+</html>
