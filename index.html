@@ -6,12 +6,11 @@
 
 <!-- ============================================================
      LANGUAGE: CSS3
-     Purpose: Premium glassmorphic HUD, animations, responsive UI
+     Purpose: Glassmorphic HUD, animations
      ============================================================ -->
 <style>
   html, body { margin: 0; overflow: hidden; background: #000; }
 
-  /* --- Glassmorphic HUD Panel --- */
   #hud {
     position: fixed; bottom: 14px; left: 14px;
     color: #e0e8f0; font-family: 'Courier New', monospace; font-size: 12px;
@@ -21,14 +20,10 @@
     padding: 10px 16px; border-radius: 10px;
     pointer-events: none; line-height: 1.6; white-space: pre;
     box-shadow: 0 4px 30px rgba(0,0,0,.35), inset 0 0 20px rgba(80,120,255,.04);
-    animation: hudFadeIn 1s ease-out;
   }
   #hud .label { color: #6a8ccc; }
   #hud .value { color: #e8f0ff; font-weight: bold; }
-  #hud .grounded { color: #5ae85a; }
-  #hud .airborne { color: #e8a832; }
 
-  /* --- Physics Debug Overlay --- */
   #debug {
     position: fixed; top: 14px; right: 14px;
     color: #8aa0c0; font-family: 'Courier New', monospace; font-size: 11px;
@@ -39,218 +34,116 @@
     pointer-events: none; line-height: 1.5; white-space: pre;
     box-shadow: 0 2px 20px rgba(0,0,0,.3);
   }
-
-  /* --- Crosshair --- */
-  #crosshair {
-    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    pointer-events: none; opacity: 0.35;
-  }
-
-  /* --- Animations --- */
-  @keyframes hudFadeIn {
-    from { opacity: 0; transform: translateY(20px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
 </style>
 </head>
 <body>
 
-<!-- ============================================================
-     LANGUAGE: HTML5 + SVG
-     Purpose: Structure, scalable vector crosshair icon
-     ============================================================ -->
 <div id="hud"></div>
 <div id="debug"></div>
-
-<!-- SVG crosshair — scales perfectly at any resolution -->
-<svg id="crosshair" width="24" height="24" viewBox="0 0 24 24">
-  <circle cx="12" cy="12" r="3" fill="none" stroke="#ffffff" stroke-width="1"/>
-  <line x1="12" y1="2" x2="12" y2="8" stroke="#ffffff" stroke-width="1"/>
-  <line x1="12" y1="16" x2="12" y2="22" stroke="#ffffff" stroke-width="1"/>
-  <line x1="2" y1="12" x2="8" y2="12" stroke="#ffffff" stroke-width="1"/>
-  <line x1="16" y1="12" x2="22" y2="12" stroke="#ffffff" stroke-width="1"/>
-</svg>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script>
 
 /* ============================================================
-   LANGUAGE: JAVASCRIPT
    SECTION: WORLD CONSTANTS
-   All physics and world rules. Change one → whole world changes.
    ============================================================ */
 var WORLD = {
-  // --- Gravity & Forces ---
-  GRAVITY:         9.81,       // m/s² — Earth-like
-  AIR_DENSITY:     1.225,      // kg/m³
-  DRAG_COEFF:      0.47,       // default sphere drag
-  WIND:            { x: 0, y: 0, z: 0 },
+  GRAVITY:         9.81,
+  AIR_DENSITY:     1.225,
+  DRAG_COEFF:      0.47,
+  WIND:            { x: 0.5, y: 0, z: 0.3 },
 
-  // --- Ground & Terrain ---
   GROUND_Y:        0,
   GROUND_FRICTION: 0.6,
   GROUND_BOUNCE:   0.3,
 
-  // --- World Bounds ---
-  SIZE:            400,        // meters
-  BOUNDARY:        'soft',     // 'hard' | 'soft' | 'wrap'
+  SIZE:            400,
+  BOUNDARY:        'soft',
 
-  // --- Time ---
   MAX_DT:          0.05,
   SUBSTEPS:        2,
 
-  // --- Collision ---
   RESTITUTION:     0.4,
   MIN_VELOCITY:    0.01,
 
-  // --- Sky / Environment ---
-  SUN_AZIMUTH:     0.8,       // radians — sun horizontal angle
-  SUN_ELEVATION:   0.45,      // 0 = horizon, 1 = overhead
-  TIME_OF_DAY:     0.65       // 0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset
+  // Island
+  ISLAND_RADIUS:   150,
+  ISLAND_HEIGHT:   4,
+
+  // Sea
+  SEA_LEVEL:       -0.5,
+
+  // Sky
+  SUN_AZIMUTH:     0.8,
+  SUN_ELEVATION:   0.45,
+  TIME_OF_DAY:     0.65
 };
 
 /* ============================================================
-   LANGUAGE: JAVASCRIPT
    SECTION: VECTOR MATH
    ============================================================ */
 var VMath = {
-  dist: function(a, b) {
-    var dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
-    return Math.sqrt(dx * dx + dy * dy + dz * dz);
-  },
-  distXZ: function(a, b) {
-    var dx = b.x - a.x, dz = b.z - a.z;
-    return Math.sqrt(dx * dx + dz * dz);
-  },
-  len: function(v) {
-    return Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-  },
-  lenXZ: function(v) {
-    return Math.sqrt(v.x * v.x + v.z * v.z);
-  },
-  normalize: function(v) {
-    var l = VMath.len(v);
-    if (l < 0.0001) return { x: 0, y: 0, z: 0 };
-    return { x: v.x / l, y: v.y / l, z: v.z / l };
-  },
-  dot: function(a, b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-  },
-  cross: function(a, b) {
-    return {
-      x: a.y * b.z - a.z * b.y,
-      y: a.z * b.x - a.x * b.z,
-      z: a.x * b.y - a.y * b.x
-    };
-  },
-  scale: function(v, s) {
-    return { x: v.x * s, y: v.y * s, z: v.z * s };
-  },
-  add: function(a, b) {
-    return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
-  },
-  sub: function(a, b) {
-    return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
-  },
-  clamp: function(val, min, max) {
-    return Math.max(min, Math.min(max, val));
-  },
-  lerp: function(a, b, t) {
-    return a + (b - a) * t;
-  },
-  wrapAngle: function(a) {
-    while (a > Math.PI)  a -= 2 * Math.PI;
-    while (a < -Math.PI) a += 2 * Math.PI;
-    return a;
-  },
-  reflect: function(v, normal) {
-    var d = VMath.dot(v, normal) * 2;
-    return { x: v.x - d * normal.x, y: v.y - d * normal.y, z: v.z - d * normal.z };
-  },
-  rotateY: function(v, angle) {
-    var c = Math.cos(angle), s = Math.sin(angle);
-    return { x: v.x * c - v.z * s, y: v.y, z: v.x * s + v.z * c };
-  }
+  dist: function(a, b) { var dx=b.x-a.x,dy=b.y-a.y,dz=b.z-a.z; return Math.sqrt(dx*dx+dy*dy+dz*dz); },
+  distXZ: function(a, b) { var dx=b.x-a.x,dz=b.z-a.z; return Math.sqrt(dx*dx+dz*dz); },
+  len: function(v) { return Math.sqrt(v.x*v.x+v.y*v.y+v.z*v.z); },
+  lenXZ: function(v) { return Math.sqrt(v.x*v.x+v.z*v.z); },
+  normalize: function(v) { var l=VMath.len(v); if(l<0.0001)return{x:0,y:0,z:0}; return{x:v.x/l,y:v.y/l,z:v.z/l}; },
+  dot: function(a, b) { return a.x*b.x+a.y*b.y+a.z*b.z; },
+  cross: function(a, b) { return{x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x}; },
+  scale: function(v, s) { return{x:v.x*s,y:v.y*s,z:v.z*s}; },
+  add: function(a, b) { return{x:a.x+b.x,y:a.y+b.y,z:a.z+b.z}; },
+  sub: function(a, b) { return{x:a.x-b.x,y:a.y-b.y,z:a.z-b.z}; },
+  clamp: function(v, mn, mx) { return Math.max(mn,Math.min(mx,v)); },
+  lerp: function(a, b, t) { return a+(b-a)*t; },
+  wrapAngle: function(a) { while(a>Math.PI)a-=2*Math.PI; while(a<-Math.PI)a+=2*Math.PI; return a; },
+  reflect: function(v, n) { var d=VMath.dot(v,n)*2; return{x:v.x-d*n.x,y:v.y-d*n.y,z:v.z-d*n.z}; },
+  rotateY: function(v, a) { var c=Math.cos(a),s=Math.sin(a); return{x:v.x*c-v.z*s,y:v.y,z:v.x*s+v.z*c}; }
 };
 
 /* ============================================================
-   LANGUAGE: JAVASCRIPT
    SECTION: PHYSICS ENGINE
    ============================================================ */
 var Physics = {
   step: function(entity, dt) {
     var halfSize = WORLD.SIZE / 2;
-
-    // 1. GRAVITY
     entity.vel.y -= WORLD.GRAVITY * dt;
-
-    // 2. AIR DRAG: F = 0.5 * ρ * v² * Cd * A
     var speed = VMath.len(entity.vel);
     if (speed > WORLD.MIN_VELOCITY) {
       var area = Math.PI * entity.radius * entity.radius;
       var dragForce = 0.5 * WORLD.AIR_DENSITY * speed * speed * entity.dragCoeff * area;
-      var dragAccel = dragForce / entity.mass;
-      var dragDt = Math.min(dragAccel * dt, speed);
+      var dragDt = Math.min((dragForce / entity.mass) * dt, speed);
       var dragDir = VMath.normalize(entity.vel);
       entity.vel.x -= dragDir.x * dragDt;
       entity.vel.y -= dragDir.y * dragDt;
       entity.vel.z -= dragDir.z * dragDt;
     }
-
-    // 3. WIND
-    if (WORLD.WIND.x || WORLD.WIND.y || WORLD.WIND.z) {
-      var area2 = Math.PI * entity.radius * entity.radius;
-      var windForce = 0.5 * WORLD.AIR_DENSITY * area2 * 0.3;
-      entity.vel.x += (WORLD.WIND.x * windForce / entity.mass) * dt;
-      entity.vel.z += (WORLD.WIND.z * windForce / entity.mass) * dt;
+    if (WORLD.WIND.x || WORLD.WIND.z) {
+      var wf = 0.5 * WORLD.AIR_DENSITY * Math.PI * entity.radius * entity.radius * 0.3;
+      entity.vel.x += (WORLD.WIND.x * wf / entity.mass) * dt;
+      entity.vel.z += (WORLD.WIND.z * wf / entity.mass) * dt;
     }
-
-    // 4. INTEGRATE POSITION
     entity.pos.x += entity.vel.x * dt;
     entity.pos.y += entity.vel.y * dt;
     entity.pos.z += entity.vel.z * dt;
-
-    // 5. GROUND COLLISION
     entity.grounded = false;
     if (entity.pos.y <= WORLD.GROUND_Y + entity.radius) {
       entity.pos.y = WORLD.GROUND_Y + entity.radius;
-      if (entity.vel.y < -0.5) {
-        entity.vel.y *= -entity.bounce;
-      } else {
-        entity.vel.y = 0;
-      }
-      var fric = 1 - entity.friction * dt * 10;
-      fric = VMath.clamp(fric, 0, 1);
-      entity.vel.x *= fric;
-      entity.vel.z *= fric;
+      if (entity.vel.y < -0.5) entity.vel.y *= -entity.bounce; else entity.vel.y = 0;
+      var fric = VMath.clamp(1 - entity.friction * dt * 10, 0, 1);
+      entity.vel.x *= fric; entity.vel.z *= fric;
       entity.grounded = true;
     }
-
-    // 6. WORLD BOUNDARIES
-    if (WORLD.BOUNDARY === 'hard') {
-      if (entity.pos.x < -halfSize + entity.radius) { entity.pos.x = -halfSize + entity.radius; entity.vel.x = Math.abs(entity.vel.x) * entity.bounce; }
-      if (entity.pos.x >  halfSize - entity.radius) { entity.pos.x =  halfSize - entity.radius; entity.vel.x = -Math.abs(entity.vel.x) * entity.bounce; }
-      if (entity.pos.z < -halfSize + entity.radius) { entity.pos.z = -halfSize + entity.radius; entity.vel.z = Math.abs(entity.vel.z) * entity.bounce; }
-      if (entity.pos.z >  halfSize - entity.radius) { entity.pos.z =  halfSize - entity.radius; entity.vel.z = -Math.abs(entity.vel.z) * entity.bounce; }
-    } else if (WORLD.BOUNDARY === 'soft') {
+    if (WORLD.BOUNDARY === 'soft') {
       var push = 20;
       if (entity.pos.x < -halfSize + 2) entity.vel.x += push * dt;
       if (entity.pos.x >  halfSize - 2) entity.vel.x -= push * dt;
       if (entity.pos.z < -halfSize + 2) entity.vel.z += push * dt;
       if (entity.pos.z >  halfSize - 2) entity.vel.z -= push * dt;
-    } else if (WORLD.BOUNDARY === 'wrap') {
-      if (entity.pos.x < -halfSize) entity.pos.x += WORLD.SIZE;
-      if (entity.pos.x >  halfSize) entity.pos.x -= WORLD.SIZE;
-      if (entity.pos.z < -halfSize) entity.pos.z += WORLD.SIZE;
-      if (entity.pos.z >  halfSize) entity.pos.z -= WORLD.SIZE;
     }
-
-    // 7. KILL MICRO-JITTER
     if (Math.abs(entity.vel.x) < WORLD.MIN_VELOCITY) entity.vel.x = 0;
     if (Math.abs(entity.vel.y) < WORLD.MIN_VELOCITY) entity.vel.y = 0;
     if (Math.abs(entity.vel.z) < WORLD.MIN_VELOCITY) entity.vel.z = 0;
   },
-
   collide: function(a, b) {
     var diff = VMath.sub(b.pos, a.pos);
     var dist = VMath.len(diff);
@@ -266,16 +159,11 @@ var Physics = {
       b.pos.y += normal.y * overlap * (a.mass / totalMass);
       b.pos.z += normal.z * overlap * (a.mass / totalMass);
       var relVel = VMath.sub(a.vel, b.vel);
-      var velAlongNormal = VMath.dot(relVel, normal);
-      if (velAlongNormal > 0) return false;
-      var restitution = Math.min(a.bounce, b.bounce);
-      var impulse = -(1 + restitution) * velAlongNormal / totalMass;
-      a.vel.x += impulse * b.mass * normal.x;
-      a.vel.y += impulse * b.mass * normal.y;
-      a.vel.z += impulse * b.mass * normal.z;
-      b.vel.x -= impulse * a.mass * normal.x;
-      b.vel.y -= impulse * a.mass * normal.y;
-      b.vel.z -= impulse * a.mass * normal.z;
+      var vn = VMath.dot(relVel, normal);
+      if (vn > 0) return false;
+      var impulse = -(1 + Math.min(a.bounce, b.bounce)) * vn / totalMass;
+      a.vel.x += impulse * b.mass * normal.x; a.vel.y += impulse * b.mass * normal.y; a.vel.z += impulse * b.mass * normal.z;
+      b.vel.x -= impulse * a.mass * normal.x; b.vel.y -= impulse * a.mass * normal.y; b.vel.z -= impulse * a.mass * normal.z;
       return true;
     }
     return false;
@@ -283,33 +171,24 @@ var Physics = {
 };
 
 /* ============================================================
-   LANGUAGE: JAVASCRIPT
    SECTION: ENTITY REGISTRY
    ============================================================ */
 var entities = [];
 
 function createEntity(options) {
   var e = {
-    pos:       options.pos       || { x: 0, y: 5, z: 0 },
-    vel:       options.vel       || { x: 0, y: 0, z: 0 },
-    mass:      options.mass      || 1,
-    radius:    options.radius    || 0.5,
-    friction:  options.friction  || WORLD.GROUND_FRICTION,
-    bounce:    options.bounce    || WORLD.GROUND_BOUNCE,
-    dragCoeff: options.dragCoeff || WORLD.DRAG_COEFF,
-    grounded:  false,
-    heading:   options.heading   || 0,
-    type:      options.type      || 'generic',
-    mesh:      options.mesh      || null,
-    dynamic:   options.dynamic !== undefined ? options.dynamic : true,
-    data:      options.data      || {}
+    pos: options.pos || {x:0,y:5,z:0}, vel: options.vel || {x:0,y:0,z:0},
+    mass: options.mass || 1, radius: options.radius || 0.5,
+    friction: options.friction || WORLD.GROUND_FRICTION, bounce: options.bounce || WORLD.GROUND_BOUNCE,
+    dragCoeff: options.dragCoeff || WORLD.DRAG_COEFF, grounded: false, heading: options.heading || 0,
+    type: options.type || 'generic', mesh: options.mesh || null,
+    dynamic: options.dynamic !== undefined ? options.dynamic : true, data: options.data || {}
   };
   entities.push(e);
   return e;
 }
 
 /* ============================================================
-   LANGUAGE: JAVASCRIPT
    SECTION: RENDERER
    ============================================================ */
 var renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -322,150 +201,95 @@ renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
 
 /* ============================================================
-   LANGUAGE: JAVASCRIPT
    SECTION: SCENE
    ============================================================ */
 var scene = new THREE.Scene();
 
 /* ============================================================
-   LANGUAGE: GLSL (OpenGL Shading Language)
+   LANGUAGE: GLSL
    SECTION: SKY SHADER
-   Purpose: GPU-rendered procedural sky with atmosphere scattering,
-   sun disk, clouds, and day/night cycle. Runs entirely on the
-   graphics card — zero CPU cost.
    ============================================================ */
-var skyVertexShader = [
+var skyVS = [
   'varying vec3 vWorldPos;',
   'void main() {',
-  '  vec4 worldPos = modelMatrix * vec4(position, 1.0);',
-  '  vWorldPos = worldPos.xyz;',
+  '  vec4 wp = modelMatrix * vec4(position, 1.0);',
+  '  vWorldPos = wp.xyz;',
   '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
   '}'
 ].join('\n');
 
-var skyFragmentShader = [
+var skyFS = [
   'uniform vec3 uSunDir;',
   'uniform float uTime;',
   'varying vec3 vWorldPos;',
 
-  // --- Hash & noise for procedural clouds ---
-  'float hash(vec2 p) {',
-  '  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);',
-  '}',
+  'float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }',
 
   'float noise(vec2 p) {',
-  '  vec2 i = floor(p);',
-  '  vec2 f = fract(p);',
-  '  f = f * f * (3.0 - 2.0 * f);', // smoothstep
-  '  float a = hash(i);',
-  '  float b = hash(i + vec2(1.0, 0.0));',
-  '  float c = hash(i + vec2(0.0, 1.0));',
-  '  float d = hash(i + vec2(1.0, 1.0));',
-  '  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);',
+  '  vec2 i = floor(p), f = fract(p);',
+  '  f = f*f*(3.0-2.0*f);',
+  '  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y);',
   '}',
 
   'float fbm(vec2 p) {',
-  '  float v = 0.0, a = 0.5;',
-  '  mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);',
-  '  for (int i = 0; i < 5; i++) {',
-  '    v += a * noise(p);',
-  '    p = rot * p * 2.0;',
-  '    a *= 0.5;',
-  '  }',
-  '  return v;',
+  '  float v=0.0,a=0.5; mat2 r=mat2(0.8,0.6,-0.6,0.8);',
+  '  for(int i=0;i<5;i++){v+=a*noise(p);p=r*p*2.0;a*=0.5;}return v;',
   '}',
 
   'void main() {',
   '  vec3 dir = normalize(vWorldPos - cameraPosition);',
   '  float y = dir.y;',
-
-  '  // --- Atmosphere Rayleigh scattering approximation ---',
   '  float sunDot = max(dot(dir, uSunDir), 0.0);',
-  '  float sunHeight = uSunDir.y;',
+  '  float sunH = uSunDir.y;',
 
-  '  // Sky gradient: blue overhead → warm at horizon',
-  '  vec3 zenith = vec3(0.15, 0.35, 0.85);',
-  '  vec3 horizon = vec3(0.55, 0.65, 0.8);',
-  '  vec3 sunset = vec3(1.0, 0.45, 0.15);',
-
-  '  // Shift colors based on sun elevation',
-  '  float sunsetFactor = smoothstep(0.0, 0.3, sunHeight) * (1.0 - smoothstep(0.3, 0.6, sunHeight));',
-  '  horizon = mix(sunset, horizon, smoothstep(0.0, 0.35, sunHeight));',
-
-  '  float t = smoothstep(-0.05, 0.5, y);',
+  '  vec3 zenith = vec3(0.15,0.35,0.85);',
+  '  vec3 horizon = vec3(0.55,0.65,0.8);',
+  '  vec3 sunset = vec3(1.0,0.45,0.15);',
+  '  horizon = mix(sunset, horizon, smoothstep(0.0,0.35,sunH));',
+  '  float t = smoothstep(-0.05,0.5,y);',
   '  vec3 sky = mix(horizon, zenith, t);',
 
-  '  // Night sky',
-  '  vec3 nightZenith = vec3(0.02, 0.03, 0.08);',
-  '  vec3 nightHorizon = vec3(0.04, 0.05, 0.12);',
-  '  vec3 nightSky = mix(nightHorizon, nightZenith, t);',
-  '  float nightFactor = 1.0 - smoothstep(-0.1, 0.15, sunHeight);',
-  '  sky = mix(sky, nightSky, nightFactor);',
+  '  vec3 nightSky = mix(vec3(0.04,0.05,0.12), vec3(0.02,0.03,0.08), t);',
+  '  float nightF = 1.0 - smoothstep(-0.1,0.15,sunH);',
+  '  sky = mix(sky, nightSky, nightF);',
 
-  '  // --- Sun disk ---',
-  '  float sunGlow = pow(sunDot, 256.0);',       // hard sun disk
-  '  float sunHalo = pow(sunDot, 8.0) * 0.35;',  // soft glow around sun
-  '  vec3 sunColor = mix(vec3(1.0, 0.5, 0.2), vec3(1.0, 0.95, 0.8), smoothstep(0.1, 0.5, sunHeight));',
-  '  sky += sunColor * sunGlow + sunColor * sunHalo;',
+  '  sky += mix(vec3(1,.5,.2),vec3(1,.95,.8),smoothstep(.1,.5,sunH)) * (pow(sunDot,256.0) + pow(sunDot,8.0)*0.35);',
 
-  '  // --- Stars at night ---',
-  '  if (nightFactor > 0.1) {',
-  '    float stars = step(0.997, hash(floor(dir.xz * 300.0 + dir.y * 300.0)));',
-  '    float twinkle = 0.7 + 0.3 * sin(uTime * 3.0 + hash(floor(dir.xz * 300.0)) * 50.0);',
-  '    sky += vec3(stars * nightFactor * twinkle);',
+  '  if(nightF>0.1){',
+  '    float stars = step(0.997,hash(floor(dir.xz*300.0+dir.y*300.0)));',
+  '    sky += vec3(stars*nightF*(0.7+0.3*sin(uTime*3.0+hash(floor(dir.xz*300.0))*50.0)));',
   '  }',
 
-  '  // --- Procedural clouds ---',
-  '  if (y > 0.0) {',
-  '    vec2 cloudUV = dir.xz / (y + 0.1) * 3.0 + uTime * 0.02;',
-  '    float cloud = fbm(cloudUV);',
-  '    cloud = smoothstep(0.35, 0.65, cloud);',
-  '    float cloudBrightness = mix(0.15, 1.0, smoothstep(-0.05, 0.3, sunHeight));',
-  '    vec3 cloudColor = vec3(cloudBrightness) * mix(vec3(1.0, 0.7, 0.5), vec3(1.0), smoothstep(0.1, 0.4, sunHeight));',
-  '    sky = mix(sky, cloudColor, cloud * 0.55 * smoothstep(0.0, 0.15, y));',
+  '  if(y>0.0){',
+  '    vec2 cuv = dir.xz/(y+0.1)*3.0+uTime*0.02;',
+  '    float cloud = smoothstep(0.35,0.65,fbm(cuv));',
+  '    float cb = mix(0.15,1.0,smoothstep(-0.05,0.3,sunH));',
+  '    sky = mix(sky,vec3(cb)*mix(vec3(1,.7,.5),vec3(1),smoothstep(.1,.4,sunH)),cloud*0.55*smoothstep(0.0,0.15,y));',
   '  }',
 
-  '  // --- Ground fog at horizon ---',
-  '  float fogFactor = exp(-abs(y) * 8.0) * 0.25;',
-  '  vec3 fogColor = mix(sunset * 0.5, vec3(0.7, 0.75, 0.8), smoothstep(0.1, 0.5, sunHeight));',
-  '  sky = mix(sky, fogColor, fogFactor);',
-
+  '  sky = mix(sky, mix(sunset*0.5,vec3(.7,.75,.8),smoothstep(.1,.5,sunH)), exp(-abs(y)*8.0)*0.25);',
   '  gl_FragColor = vec4(sky, 1.0);',
   '}'
 ].join('\n');
 
-// Sun direction computed from world constants
 function getSunDir() {
   var elev = WORLD.SUN_ELEVATION * Math.PI / 2;
-  var azim = WORLD.SUN_AZIMUTH;
-  return new THREE.Vector3(
-    Math.cos(elev) * Math.sin(azim),
-    Math.sin(elev),
-    Math.cos(elev) * Math.cos(azim)
-  ).normalize();
+  return new THREE.Vector3(Math.cos(elev)*Math.sin(WORLD.SUN_AZIMUTH), Math.sin(elev), Math.cos(elev)*Math.cos(WORLD.SUN_AZIMUTH)).normalize();
 }
 
-var skyUniforms = {
-  uSunDir: { value: getSunDir() },
-  uTime:   { value: 0 }
-};
-
-var skyMaterial = new THREE.ShaderMaterial({
-  vertexShader: skyVertexShader,
-  fragmentShader: skyFragmentShader,
-  uniforms: skyUniforms,
-  side: THREE.BackSide,
-  depthWrite: false
-});
-
-var skyDome = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 24), skyMaterial);
+var skyUniforms = { uSunDir: { value: getSunDir() }, uTime: { value: 0 } };
+var skyDome = new THREE.Mesh(
+  new THREE.SphereGeometry(500, 32, 24),
+  new THREE.ShaderMaterial({ vertexShader: skyVS, fragmentShader: skyFS, uniforms: skyUniforms, side: THREE.BackSide, depthWrite: false })
+);
 scene.add(skyDome);
 
 /* ============================================================
-   LANGUAGE: JAVASCRIPT
    SECTION: CAMERA
    ============================================================ */
 var camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.1, 700);
+camera.position.set(0, 60, 180);
+camera.lookAt(0, 0, 0);
 
 window.addEventListener('resize', function() {
   camera.aspect = innerWidth / innerHeight;
@@ -474,126 +298,288 @@ window.addEventListener('resize', function() {
 });
 
 /* ============================================================
-   LANGUAGE: JAVASCRIPT
-   SECTION: LIGHTING (synced to sky shader sun)
+   SECTION: LIGHTING
    ============================================================ */
 var hemiLight = new THREE.HemisphereLight(0xbfd9ff, 0x3f5a36, 0.7);
 scene.add(hemiLight);
 
-var sunLight = new THREE.DirectionalLight(0xfff2d9, 1.6);
 var sunDir = getSunDir();
+var sunLight = new THREE.DirectionalLight(0xfff2d9, 1.6);
 sunLight.position.set(sunDir.x * 100, sunDir.y * 100, sunDir.z * 100);
 sunLight.castShadow = true;
 sunLight.shadow.mapSize.set(2048, 2048);
-sunLight.shadow.camera.left = -90;
-sunLight.shadow.camera.right = 90;
-sunLight.shadow.camera.top = 90;
-sunLight.shadow.camera.bottom = -90;
-sunLight.shadow.camera.far = 400;
+sunLight.shadow.camera.left = -150;
+sunLight.shadow.camera.right = 150;
+sunLight.shadow.camera.top = 150;
+sunLight.shadow.camera.bottom = -150;
+sunLight.shadow.camera.far = 500;
 sunLight.shadow.bias = -0.0004;
 scene.add(sunLight);
 scene.add(sunLight.target);
 
 /* ============================================================
-   LANGUAGE: GLSL
-   SECTION: GROUND SHADER
-   Purpose: Procedural ground with grid lines and distance fade.
-   Infinite detail, no texture memory.
+   LANGUAGE: JAVASCRIPT + CANVAS 2D
+   SECTION: ISLAND TERRAIN
+   Procedural island using height-mapped circular geometry.
+   Height generated via Canvas 2D noise, shaped into island.
    ============================================================ */
-var groundVertShader = [
-  'varying vec2 vUv;',
+var ISLAND_RES = 128;
+var ISLAND_R = WORLD.ISLAND_RADIUS;
+var ISLAND_H = WORLD.ISLAND_HEIGHT;
+
+// Generate height data using layered noise (Canvas 2D for computation)
+var heightData = [];
+(function generateIslandHeights() {
+  // Simple seeded noise via canvas
+  var nc = document.createElement('canvas');
+  nc.width = nc.height = ISLAND_RES + 1;
+  var nctx = nc.getContext('2d');
+
+  // Layered noise function
+  function simpleNoise(x, z) {
+    var v = 0;
+    v += Math.sin(x * 0.02 + 1.3) * Math.cos(z * 0.03 + 0.7) * 1.0;
+    v += Math.sin(x * 0.05 + 2.1) * Math.cos(z * 0.04 - 1.2) * 0.5;
+    v += Math.sin(x * 0.11 + 0.5) * Math.cos(z * 0.09 + 3.1) * 0.25;
+    v += Math.sin(x * 0.23 - 1.7) * Math.cos(z * 0.19 + 0.3) * 0.12;
+    return v;
+  }
+
+  for (var iz = 0; iz <= ISLAND_RES; iz++) {
+    heightData[iz] = [];
+    for (var ix = 0; ix <= ISLAND_RES; ix++) {
+      // Map grid to world coordinates
+      var wx = (ix / ISLAND_RES - 0.5) * ISLAND_R * 2;
+      var wz = (iz / ISLAND_RES - 0.5) * ISLAND_R * 2;
+
+      // Distance from center (0 at center, 1 at edge)
+      var dist = Math.sqrt(wx * wx + wz * wz) / ISLAND_R;
+
+      // Island falloff — smooth drop to sea level at edges
+      var falloff = 1.0 - smoothstepJS(0.55, 1.0, dist);
+      falloff *= falloff; // sharper edge
+
+      // Noise-based terrain variation
+      var n = simpleNoise(wx, wz);
+
+      // Final height
+      var h = (n * 0.5 + 0.5) * ISLAND_H * falloff;
+
+      // Below sea level outside island
+      if (dist > 0.95) h = Math.min(h, WORLD.SEA_LEVEL - 1);
+
+      heightData[iz][ix] = h;
+    }
+  }
+})();
+
+function smoothstepJS(edge0, edge1, x) {
+  var t = VMath.clamp((x - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+// Build terrain mesh from height data
+var terrainGeo = new THREE.PlaneGeometry(ISLAND_R * 2, ISLAND_R * 2, ISLAND_RES, ISLAND_RES);
+terrainGeo.rotateX(-Math.PI / 2);
+var terrainVerts = terrainGeo.attributes.position;
+
+for (var i = 0; i <= ISLAND_RES; i++) {
+  for (var j = 0; j <= ISLAND_RES; j++) {
+    var idx = i * (ISLAND_RES + 1) + j;
+    terrainVerts.setY(idx, heightData[i][j]);
+  }
+}
+terrainGeo.computeVertexNormals();
+
+/* ============================================================
+   LANGUAGE: GLSL
+   SECTION: ISLAND GROUND SHADER
+   GPU-rendered terrain coloring based on height and slope.
+   ============================================================ */
+var terrainVS = [
   'varying vec3 vWorldPos;',
+  'varying vec3 vNormal;',
+  'varying float vHeight;',
   'void main() {',
-  '  vUv = uv;',
   '  vec4 wp = modelMatrix * vec4(position, 1.0);',
   '  vWorldPos = wp.xyz;',
+  '  vNormal = normalize(normalMatrix * normal);',
+  '  vHeight = position.y;',
   '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
   '}'
 ].join('\n');
 
-var groundFragShader = [
-  'varying vec2 vUv;',
+var terrainFS = [
+  'uniform vec3 uSunDir;',
   'varying vec3 vWorldPos;',
-  'uniform float uSize;',
+  'varying vec3 vNormal;',
+  'varying float vHeight;',
+
+  'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}',
 
   'void main() {',
-  '  // Base ground color',
-  '  vec3 baseColor = vec3(0.28, 0.48, 0.22);',
+  '  float slope = 1.0 - vNormal.y;', // 0 = flat, 1 = vertical
 
-  '  // Subtle procedural grass variation',
-  '  float n = fract(sin(dot(floor(vWorldPos.xz * 0.5), vec2(12.9898, 78.233))) * 43758.5453);',
-  '  baseColor += (n - 0.5) * 0.06;',
+  '  // Color by height + slope',
+  '  vec3 sand   = vec3(0.76, 0.70, 0.50);',
+  '  vec3 grass  = vec3(0.30, 0.52, 0.22);',
+  '  vec3 dirt   = vec3(0.45, 0.35, 0.25);',
+  '  vec3 rock   = vec3(0.42, 0.40, 0.38);',
 
-  '  // Grid lines every 10m (faint) and 50m (visible)',
-  '  vec2 grid10 = abs(fract(vWorldPos.xz / 10.0 - 0.5) - 0.5) / fwidth(vWorldPos.xz / 10.0);',
-  '  float line10 = min(grid10.x, grid10.y);',
-  '  float grid10Factor = 1.0 - min(line10, 1.0);',
+  '  // Beach near sea level',
+  '  float beachFactor = 1.0 - smoothstep(0.0, 1.5, vHeight);',
 
-  '  vec2 grid50 = abs(fract(vWorldPos.xz / 50.0 - 0.5) - 0.5) / fwidth(vWorldPos.xz / 50.0);',
-  '  float line50 = min(grid50.x, grid50.y);',
-  '  float grid50Factor = 1.0 - min(line50, 1.0);',
+  '  // Grass on flat areas, rock on slopes',
+  '  vec3 groundColor = mix(grass, rock, smoothstep(0.3, 0.7, slope));',
 
-  '  baseColor = mix(baseColor, vec3(0.22, 0.40, 0.18), grid10Factor * 0.25);',
-  '  baseColor = mix(baseColor, vec3(0.18, 0.35, 0.15), grid50Factor * 0.5);',
+  '  // Blend sand at low altitude',
+  '  groundColor = mix(groundColor, sand, beachFactor);',
 
-  '  // Distance fade to fog',
+  '  // Subtle noise variation',
+  '  float n = hash(floor(vWorldPos.xz * 2.0));',
+  '  groundColor += (n - 0.5) * 0.04;',
+
+  '  // Simple diffuse lighting',
+  '  float diffuse = max(dot(vNormal, uSunDir), 0.0);',
+  '  float ambient = 0.35;',
+  '  vec3 lit = groundColor * (ambient + diffuse * 0.65);',
+
+  '  // Distance fog',
   '  float dist = length(vWorldPos.xz);',
-  '  float fade = smoothstep(uSize * 0.3, uSize * 0.5, dist);',
-  '  vec3 fogColor = vec3(0.55, 0.65, 0.5);',
-  '  baseColor = mix(baseColor, fogColor, fade);',
+  '  float fog = smoothstep(100.0, 250.0, dist);',
+  '  lit = mix(lit, vec3(0.55, 0.68, 0.78), fog);',
 
-  '  gl_FragColor = vec4(baseColor, 1.0);',
+  '  gl_FragColor = vec4(lit, 1.0);',
   '}'
 ].join('\n');
 
-var groundUniforms = {
-  uSize: { value: WORLD.SIZE }
+var terrainUniforms = { uSunDir: { value: getSunDir() } };
+var terrainMaterial = new THREE.ShaderMaterial({
+  vertexShader: terrainVS,
+  fragmentShader: terrainFS,
+  uniforms: terrainUniforms
+});
+
+var terrainMesh = new THREE.Mesh(terrainGeo, terrainMaterial);
+terrainMesh.receiveShadow = true;
+scene.add(terrainMesh);
+
+/* ============================================================
+   LANGUAGE: GLSL
+   SECTION: OCEAN SHADER
+   GPU-rendered infinite ocean with animated waves, reflections,
+   foam at shoreline, and depth-based color.
+   ============================================================ */
+var oceanVS = [
+  'uniform float uTime;',
+  'varying vec3 vWorldPos;',
+  'varying vec2 vUv;',
+
+  'void main() {',
+  '  vec3 pos = position;',
+
+  '  // Vertex wave displacement (Gerstner-like)',
+  '  float w1 = sin(pos.x * 0.08 + uTime * 1.2) * cos(pos.z * 0.06 + uTime * 0.9) * 0.6;',
+  '  float w2 = sin(pos.x * 0.15 + pos.z * 0.1 + uTime * 1.8) * 0.3;',
+  '  float w3 = sin(pos.x * 0.03 - uTime * 0.5) * cos(pos.z * 0.04 + uTime * 0.7) * 1.0;',
+  '  pos.y += w1 + w2 + w3;',
+
+  '  vec4 wp = modelMatrix * vec4(pos, 1.0);',
+  '  vWorldPos = wp.xyz;',
+  '  vUv = uv;',
+  '  gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);',
+  '}'
+].join('\n');
+
+var oceanFS = [
+  'uniform float uTime;',
+  'uniform vec3 uSunDir;',
+  'uniform float uIslandRadius;',
+  'varying vec3 vWorldPos;',
+  'varying vec2 vUv;',
+
+  'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}',
+  'float noise(vec2 p){',
+  '  vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);',
+  '  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);',
+  '}',
+
+  'void main() {',
+  '  vec3 dir = normalize(vWorldPos - cameraPosition);',
+
+  '  // Deep vs shallow color',
+  '  float distFromCenter = length(vWorldPos.xz);',
+  '  float shallowFactor = smoothstep(uIslandRadius * 0.6, uIslandRadius * 1.0, distFromCenter);',
+  '  vec3 deepColor = vec3(0.02, 0.10, 0.25);',
+  '  vec3 shallowColor = vec3(0.05, 0.30, 0.35);',
+  '  vec3 waterColor = mix(shallowColor, deepColor, shallowFactor);',
+
+  '  // Wave-based normal perturbation for specular',
+  '  float wave = sin(vWorldPos.x*0.3+uTime*1.5)*0.5 + cos(vWorldPos.z*0.4+uTime*1.1)*0.5;',
+  '  wave += noise(vWorldPos.xz * 0.15 + uTime * 0.3) * 0.4;',
+  '  vec3 normal = normalize(vec3(cos(vWorldPos.x*0.3+uTime*1.5)*0.15, 1.0, -sin(vWorldPos.z*0.4+uTime*1.1)*0.15));',
+
+  '  // Specular sun reflection',
+  '  vec3 reflDir = reflect(dir, normal);',
+  '  float spec = pow(max(dot(reflDir, uSunDir), 0.0), 256.0);',
+  '  float specGlow = pow(max(dot(reflDir, uSunDir), 0.0), 16.0) * 0.15;',
+  '  vec3 sunSpec = vec3(1.0, 0.95, 0.8) * (spec + specGlow);',
+
+  '  // Fresnel — more reflective at glancing angles',
+  '  float fresnel = pow(1.0 - max(dot(-dir, normal), 0.0), 3.0);',
+  '  fresnel = 0.1 + 0.9 * fresnel;',
+
+  '  // Sky reflection color (simplified)',
+  '  vec3 skyRefl = mix(vec3(0.55,0.65,0.8), vec3(0.15,0.35,0.85), max(reflDir.y, 0.0));',
+
+  '  // Combine',
+  '  vec3 color = mix(waterColor, skyRefl, fresnel * 0.5) + sunSpec;',
+
+  '  // Foam near shore',
+  '  float shoreDist = abs(distFromCenter - uIslandRadius * 0.92);',
+  '  float foam = smoothstep(15.0, 0.0, shoreDist);',
+  '  foam *= (0.5 + 0.5 * sin(vWorldPos.x * 0.8 + uTime * 2.5)) * (0.5 + 0.5 * cos(vWorldPos.z * 0.7 + uTime * 2.0));',
+  '  color = mix(color, vec3(0.85, 0.92, 0.95), foam * 0.6);',
+
+  '  // Distance fog',
+  '  float fog = smoothstep(150.0, 400.0, length(vWorldPos.xz));',
+  '  color = mix(color, vec3(0.55, 0.68, 0.78), fog);',
+
+  '  gl_FragColor = vec4(color, 0.92);',
+  '}'
+].join('\n');
+
+var oceanUniforms = {
+  uTime: { value: 0 },
+  uSunDir: { value: getSunDir() },
+  uIslandRadius: { value: ISLAND_R }
 };
 
-var groundMaterial = new THREE.ShaderMaterial({
-  vertexShader: groundVertShader,
-  fragmentShader: groundFragShader,
-  uniforms: groundUniforms
+var oceanGeo = new THREE.PlaneGeometry(800, 800, 200, 200);
+var oceanMaterial = new THREE.ShaderMaterial({
+  vertexShader: oceanVS,
+  fragmentShader: oceanFS,
+  uniforms: oceanUniforms,
+  transparent: true,
+  side: THREE.DoubleSide
 });
 
-var groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(WORLD.SIZE, WORLD.SIZE, 1, 1), groundMaterial);
-groundMesh.rotation.x = -Math.PI / 2;
-groundMesh.receiveShadow = true;
-scene.add(groundMesh);
+var oceanMesh = new THREE.Mesh(oceanGeo, oceanMaterial);
+oceanMesh.rotation.x = -Math.PI / 2;
+oceanMesh.position.y = WORLD.SEA_LEVEL;
+scene.add(oceanMesh);
 
 /* ============================================================
-   LANGUAGE: JAVASCRIPT
-   SECTION: PLAYER
+   SECTION: FREE CAMERA CONTROLS
+   No objects — just fly around and look at the world.
    ============================================================ */
-var playerGeo = new THREE.BoxGeometry(0.8, 1.8, 0.8);
-var playerMatl = new THREE.MeshStandardMaterial({ color: 0x3388ff });
-var playerMesh = new THREE.Mesh(playerGeo, playerMatl);
-playerMesh.castShadow = true;
-scene.add(playerMesh);
+var camState = {
+  x: 0, y: 40, z: 160,
+  heading: 0,
+  pitch: -0.15,
+  speed: 40
+};
 
-var player = createEntity({
-  type: 'player',
-  pos: { x: 0, y: 0.9, z: 0 },
-  vel: { x: 0, y: 0, z: 0 },
-  mass: 75,
-  radius: 0.5,
-  friction: 0.7,
-  bounce: 0.1,
-  dragCoeff: 1.0,
-  mesh: playerMesh,
-  dynamic: true
-});
-
-var PLAYER_WALK_FORCE = 600;
-var PLAYER_RUN_FORCE  = 1200;
-var PLAYER_MAX_WALK   = 5;
-var PLAYER_MAX_RUN    = 9;
-var PLAYER_JUMP_VEL   = 6;
-
-/* ============================================================
-   LANGUAGE: JAVASCRIPT
-   SECTION: INPUT
-   ============================================================ */
 var keys = {};
 window.addEventListener('keydown', function(e) {
   keys[e.key.toLowerCase()] = true;
@@ -603,15 +589,27 @@ window.addEventListener('keyup', function(e) {
   keys[e.key.toLowerCase()] = false;
 });
 
+// Mouse look
+var mouseDown = false;
+var mouseX = 0, mouseY = 0;
+renderer.domElement.addEventListener('mousedown', function(e) { mouseDown = true; mouseX = e.clientX; mouseY = e.clientY; });
+window.addEventListener('mouseup', function() { mouseDown = false; });
+window.addEventListener('mousemove', function(e) {
+  if (!mouseDown) return;
+  var dx = e.clientX - mouseX;
+  var dy = e.clientY - mouseY;
+  mouseX = e.clientX;
+  mouseY = e.clientY;
+  camState.heading -= dx * 0.003;
+  camState.pitch = VMath.clamp(camState.pitch - dy * 0.003, -1.4, 1.4);
+});
+
 /* ============================================================
    LANGUAGE: JAVASCRIPT + WEB AUDIO API
    SECTION: AUDIO ENGINE
-   Procedural sound synthesis — no audio files needed.
    ============================================================ */
 var AudioEngine = {
-  ctx: null,
-  masterGain: null,
-
+  ctx: null, masterGain: null,
   init: function() {
     if (this.ctx) return;
     this.ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -619,143 +617,71 @@ var AudioEngine = {
     this.masterGain.gain.value = 0.3;
     this.masterGain.connect(this.ctx.destination);
   },
-
-  // Play a short impact sound (pitch based on force)
   impact: function(force) {
     if (!this.ctx) return;
-    var osc = this.ctx.createOscillator();
-    var gain = this.ctx.createGain();
-    var filter = this.ctx.createBiquadFilter();
-    osc.type = 'triangle';
-    osc.frequency.value = 80 + force * 10;
-    osc.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.15);
-    filter.type = 'lowpass';
-    filter.frequency.value = 300 + force * 50;
-    gain.gain.value = Math.min(0.4, force * 0.05);
-    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.2);
-    osc.connect(filter).connect(gain).connect(this.masterGain);
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.25);
-  },
-
-  // Footstep sound
-  footstep: function(speed) {
-    if (!this.ctx) return;
-    var bufferSize = this.ctx.sampleRate * 0.06;
-    var buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-    var data = buffer.getChannelData(0);
-    for (var i = 0; i < bufferSize; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.15));
-    }
-    var source = this.ctx.createBufferSource();
-    source.buffer = buffer;
-    var filter = this.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 400 + speed * 40;
-    var gain = this.ctx.createGain();
-    gain.gain.value = 0.08;
-    source.connect(filter).connect(gain).connect(this.masterGain);
-    source.start();
+    var o = this.ctx.createOscillator(), g = this.ctx.createGain(), f = this.ctx.createBiquadFilter();
+    o.type = 'triangle'; o.frequency.value = 80 + force * 10;
+    f.type = 'lowpass'; f.frequency.value = 300 + force * 50;
+    g.gain.value = Math.min(0.4, force * 0.05);
+    g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.2);
+    o.connect(f).connect(g).connect(this.masterGain);
+    o.start(); o.stop(this.ctx.currentTime + 0.25);
   }
 };
-
-// Init audio on first interaction
 window.addEventListener('keydown', function() { AudioEngine.init(); }, { once: true });
-window.addEventListener('click', function() { AudioEngine.init(); }, { once: true });
 
 /* ============================================================
-   LANGUAGE: JAVASCRIPT
-   SECTION: FOOTSTEP TIMER
-   ============================================================ */
-var footstepTimer = 0;
-
-/* ============================================================
-   LANGUAGE: JAVASCRIPT
    SECTION: UPDATE
    ============================================================ */
 function update(dt, time) {
-  // --- Player Control ---
-  var running = keys['shift'];
-  var force = running ? PLAYER_RUN_FORCE : PLAYER_WALK_FORCE;
-  var maxSpeed = running ? PLAYER_MAX_RUN : PLAYER_MAX_WALK;
+  // --- Free Camera Movement ---
+  var spd = camState.speed * (keys['shift'] ? 3 : 1);
+  var fwd = 0, strafe = 0, up = 0;
+  if (keys['w'] || keys['arrowup'])    fwd = 1;
+  if (keys['s'] || keys['arrowdown'])  fwd = -1;
+  if (keys['a'] || keys['arrowleft'])  strafe = 1;
+  if (keys['d'] || keys['arrowright']) strafe = -1;
+  if (keys[' ']) up = 1;
+  if (keys['c']) up = -1;
 
-  if (keys['a'] || keys['arrowleft'])  player.heading += 2.5 * dt;
-  if (keys['d'] || keys['arrowright']) player.heading -= 2.5 * dt;
+  var ch = Math.cos(camState.heading), sh = Math.sin(camState.heading);
+  var cp = Math.cos(camState.pitch);
 
-  var moveDir = 0;
-  if (keys['w'] || keys['arrowup'])   moveDir = 1;
-  if (keys['s'] || keys['arrowdown']) moveDir = -0.6;
+  camState.x += (-sh * fwd * cp + ch * strafe) * spd * dt;
+  camState.z += (-ch * fwd * cp - sh * strafe) * spd * dt;
+  camState.y += (fwd * Math.sin(camState.pitch) + up) * spd * dt;
+  camState.y = Math.max(2, camState.y);
 
-  if (moveDir && player.grounded) {
-    var fx = Math.cos(player.heading) * force * moveDir / player.mass;
-    var fz = -Math.sin(player.heading) * force * moveDir / player.mass;
-    var currentSpeed = VMath.lenXZ(player.vel);
-    if (currentSpeed < maxSpeed) {
-      player.vel.x += fx * dt;
-      player.vel.z += fz * dt;
-    }
+  camera.position.set(camState.x, camState.y, camState.z);
+  var lookX = camState.x - sh * cp;
+  var lookY = camState.y + Math.sin(camState.pitch);
+  var lookZ = camState.z - ch * cp;
+  camera.lookAt(lookX, lookY, lookZ);
 
-    // footstep audio
-    footstepTimer -= dt;
-    if (footstepTimer <= 0) {
-      footstepTimer = running ? 0.28 : 0.45;
-      AudioEngine.footstep(currentSpeed);
-    }
-  } else {
-    footstepTimer = 0;
-  }
+  // --- Sync sky dome ---
+  skyDome.position.copy(camera.position);
+  skyUniforms.uTime.value = time;
+  oceanUniforms.uTime.value = time;
 
-  if (keys[' '] && player.grounded) {
-    player.vel.y = PLAYER_JUMP_VEL;
-    player.grounded = false;
-  }
+  // --- Sun follows camera ---
+  sunLight.position.set(camState.x + sunDir.x * 100, sunDir.y * 100, camState.z + sunDir.z * 100);
+  sunLight.target.position.set(camState.x, 0, camState.z);
 
-  // --- Physics Substeps ---
+  // --- Physics (for future entities) ---
   var subDt = dt / WORLD.SUBSTEPS;
   for (var s = 0; s < WORLD.SUBSTEPS; s++) {
     for (var i = 0; i < entities.length; i++) {
       if (entities[i].dynamic) Physics.step(entities[i], subDt);
     }
-    for (var i = 0; i < entities.length; i++) {
-      for (var j = i + 1; j < entities.length; j++) {
-        if (entities[i].dynamic || entities[j].dynamic) {
-          if (Physics.collide(entities[i], entities[j])) {
-            var impactForce = VMath.len(VMath.sub(entities[i].vel, entities[j].vel));
-            if (impactForce > 2) AudioEngine.impact(impactForce);
-          }
-        }
-      }
-    }
   }
-
-  // --- Sync Meshes ---
   for (var i = 0; i < entities.length; i++) {
     var e = entities[i];
-    if (e.mesh) {
-      e.mesh.position.set(e.pos.x, e.pos.y, e.pos.z);
-      e.mesh.rotation.y = e.heading - Math.PI / 2;
-    }
+    if (e.mesh) e.mesh.position.set(e.pos.x, e.pos.y, e.pos.z);
   }
-
-  // --- Camera Follow ---
-  var camDist = 8, camHeight = 5;
-  var cx = player.pos.x - Math.cos(player.heading) * camDist;
-  var cz = player.pos.z + Math.sin(player.heading) * camDist;
-  camera.position.lerp(new THREE.Vector3(cx, player.pos.y + camHeight, cz), Math.min(1, 5 * dt));
-  camera.lookAt(player.pos.x, player.pos.y + 0.5, player.pos.z);
-
-  // --- Sky dome follows camera ---
-  skyDome.position.copy(camera.position);
-  skyUniforms.uTime.value = time;
-
-  // --- Sun follows player ---
-  sunLight.position.set(player.pos.x + sunDir.x * 100, sunDir.y * 100, player.pos.z + sunDir.z * 100);
-  sunLight.target.position.set(player.pos.x, 0, player.pos.z);
 }
 
 /* ============================================================
-   LANGUAGE: JAVASCRIPT + HTML
-   SECTION: HUD UPDATE
+   SECTION: HUD
    ============================================================ */
 var hudEl = document.getElementById('hud');
 var debugEl = document.getElementById('debug');
@@ -763,41 +689,36 @@ var hudTimer = 0;
 
 function updateHUD(dt) {
   hudTimer += dt;
-  if (hudTimer < 0.15) return;
+  if (hudTimer < 0.2) return;
   hudTimer = 0;
 
-  var speed = VMath.len(player.vel);
-  var kmh = (speed * 3.6).toFixed(1);
-  var alt = (player.pos.y - player.radius).toFixed(2);
-  var state = player.grounded;
-
   hudEl.innerHTML =
-    '<span class="label">SPD</span> <span class="value">' + kmh + ' km/h</span>  ' +
-    '<span class="label">ALT</span> <span class="value">' + alt + ' m</span>  ' +
-    '<span class="' + (state ? 'grounded' : 'airborne') + '">' + (state ? '● GROUND' : '● AIR') + '</span>' +
-    '\n<span class="label">W/S</span> move  <span class="label">A/D</span> turn  ' +
-    '<span class="label">Shift</span> run  <span class="label">Space</span> jump';
+    '<span class="label">W/S</span> fly forward/back  ' +
+    '<span class="label">A/D</span> strafe  ' +
+    '<span class="label">Space/C</span> up/down  ' +
+    '<span class="label">Shift</span> fast\n' +
+    '<span class="label">Mouse drag</span> look around';
 
   debugEl.innerHTML =
-    '┌─ WORLD PHYSICS ─────────┐\n' +
+    '┌─ WORLD RULES ───────────┐\n' +
     '│ Gravity:  ' + WORLD.GRAVITY.toFixed(2) + ' m/s²       │\n' +
     '│ Air ρ:    ' + WORLD.AIR_DENSITY.toFixed(3) + ' kg/m³    │\n' +
     '│ Friction: ' + WORLD.GROUND_FRICTION.toFixed(2) + '            │\n' +
     '│ Bounce:   ' + WORLD.GROUND_BOUNCE.toFixed(2) + '            │\n' +
+    '│ Wind:     ' + WORLD.WIND.x.toFixed(1) + ',' + WORLD.WIND.z.toFixed(1) + ' m/s      │\n' +
+    '│ Sea:      ' + WORLD.SEA_LEVEL.toFixed(1) + ' m           │\n' +
+    '│ Island:   ' + WORLD.ISLAND_RADIUS + 'm radius     │\n' +
     '│ Entities: ' + entities.length + '               │\n' +
-    '│ Boundary: ' + WORLD.BOUNDARY + '            │\n' +
     '└─────────────────────────┘';
 }
 
 /* ============================================================
-   LANGUAGE: JAVASCRIPT
    SECTION: GAME LOOP
    ============================================================ */
 var lastTime = performance.now();
 
 function gameLoop(now) {
-  var rawDt = (now - lastTime) / 1000;
-  var dt = Math.min(WORLD.MAX_DT, rawDt);
+  var dt = Math.min(WORLD.MAX_DT, (now - lastTime) / 1000);
   lastTime = now;
 
   update(dt, now / 1000);
