@@ -102,8 +102,8 @@ const sky = new THREE.Mesh(
         daySky = mix(daySky, mix(sunsetHorizon, daySky, pow(h, 0.3)), sunsetF * 0.7);
 
         // --- NIGHT SKY GRADIENT ---
-        vec3 nightZenith = vec3(0.015,0.012,0.04); // Deep cosmic indigo-purple
-        vec3 nightHorizon = vec3(0.02,0.03,0.07);
+        vec3 nightZenith = vec3(0.012,0.008,0.03); // Deep cosmic indigo-purple
+        vec3 nightHorizon = vec3(0.015,0.02,0.05);
         vec3 nightSky = mix(nightHorizon, nightZenith, pow(h, 0.5));
 
         // --- BLEND DAY/NIGHT ---
@@ -114,7 +114,7 @@ const sky = new THREE.Mesh(
         if (nightF > 0.05 && h > 0.0) {
           float nebVal1 = fbm2(vDir.xz * 1.8 + vec2(vDir.y * 1.0)) * 0.5;
           float nebVal2 = fbm2(vDir.xz * 3.5 - vec2(uTime * 0.003)) * 0.25;
-          vec3 nebCol = mix(vec3(0.03, 0.01, 0.08), vec3(0.01, 0.05, 0.06), vDir.y);
+          vec3 nebCol = mix(vec3(0.02, 0.01, 0.06), vec3(0.01, 0.04, 0.05), vDir.y);
           col += nebCol * (nebVal1 + nebVal2) * nightF * h;
         }
 
@@ -158,12 +158,18 @@ const sky = new THREE.Mesh(
           }
         }
 
-        // --- CLOUDS (dim at night) ---
+        // --- ORGANIC SHADER CLOUDS ---
         if (h > 0.02) {
-          vec2 cuv = vDir.xz / (h + 0.08) * 2.5 + uTime * 0.015;
-          float cloud = smoothstep(0.4, 0.7, fbm2(cuv));
-          float cloudBright = mix(0.04, 1.0, smoothstep(-0.05, 0.3, sunH));
-          col = mix(col, vec3(cloudBright), cloud * 0.6 * smoothstep(0.0, 0.15, h));
+          vec2 cuv = vDir.xz / (h + 0.15) * 1.5 + vec2(uTime * 0.008, uTime * 0.005);
+          float cloudVal = fbm2(cuv) * 0.5 + fbm2(cuv * 2.2 - vec2(uTime * 0.003)) * 0.25;
+          float cloudMask = smoothstep(0.42, 0.68, cloudVal) * smoothstep(0.02, 0.18, h);
+          
+          vec3 cloudDayCol = mix(vec3(0.9, 0.93, 0.96), vec3(1.0, 0.85, 0.7), pow(s, 4.0));
+          vec3 cloudNightCol = mix(vec3(0.015, 0.015, 0.035), vec3(0.025, 0.03, 0.06), vDir.y);
+          vec3 cloudCol = mix(cloudDayCol, cloudNightCol, nightF);
+          
+          cloudCol = mix(cloudCol, vec3(1.0, 0.45, 0.2) * 0.8, sunsetF * (1.0 - h) * 0.6);
+          col = mix(col, cloudCol, cloudMask * 0.45);
         }
 
         gl_FragColor = vec4(col, 1.0);
@@ -895,20 +901,7 @@ const swashU = { time:{ value:0 }, sunDir:{ value:SUN_DIR } };
   scene.add(new THREE.Mesh(g, m)).renderOrder = 2;
 })();
 
-// ================= CLOUDS =================
-const cTex = radialTex('rgba(255,255,255,0.9)','rgba(255,255,255,0)');
-const clouds = new THREE.Group();
-for (let i=0;i<26;i++){
-  const m = new THREE.SpriteMaterial({ map:cTex, transparent:true,
-    opacity:0.5+Math.random()*0.35, depthWrite:false, fog:false });
-  const s = new THREE.Sprite(m);
-  const sc = 40+Math.random()*70;
-  s.scale.set(sc, sc*0.38, 1);
-  s.position.set(Math.random()*1000-500, 90+Math.random()*70, Math.random()*1000-500);
-  s.userData.speed = 0.03+Math.random()*0.05;
-  clouds.add(s);
-}
-scene.add(clouds);
+
 
 // ================= CAMERA =================
 let theta = 0.15, phi = 1.12, radius = 150;
@@ -994,10 +987,7 @@ function animate(){
   glow.scale.setScalar(6 + nightAmount * 8);
   waterUniforms.fireIntensity.value = curFireInt;
 
-  clouds.children.forEach(c=>{
-    c.position.x += c.userData.speed;
-    if (c.position.x > 560) c.position.x = -560;
-  });
+
 
   palms.forEach(p=>{
     const w1 = Math.sin(t*1.2 + p.phase), w2 = Math.sin(t*2.1 + p.phase*1.7);
