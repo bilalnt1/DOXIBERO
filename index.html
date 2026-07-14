@@ -741,10 +741,18 @@ const waterMat = new THREE.ShaderMaterial({
       float shallowMix = smoothstep(islandR + 26.0, islandR - 6.0, d);
       vec3 col = mix(deep, shallow, shallowMix);
       col = mix(col, skyCol, fres*0.75);
-      vec3 R = reflect(-sunDir, N);
-      float spec = pow(max(dot(R, V), 0.0), 300.0);
+      vec3 lightD = sunDir;
+      vec3 specColor = vec3(1.0, 0.95, 0.8) * 2.0;
+      float specPower = 300.0;
+      if (sunDir.y < 0.0) {
+        lightD = normalize(vec3(-0.76, 0.61, 0.38));
+        specColor = vec3(0.5, 0.65, 0.8) * 0.75;
+        specPower = 120.0;
+      }
+      vec3 R = reflect(-lightD, N);
+      float spec = pow(max(dot(R, V), 0.0), specPower);
       float sparkleMask = smoothstep(0.45, 0.75, fbm(vWorld.xz*1.3 + time*0.6));
-      col += vec3(1.0,0.95,0.8) * spec * 2.0 * sparkleMask;
+      col += specColor * spec * (sunDir.y > 0.0 ? sparkleMask : 0.5);
       float shoreBand = smoothstep(islandR+7.0, islandR+1.5, d) * smoothstep(islandR-9.0, islandR-2.0, d);
       float foamN = fbm(vWorld.xz*0.9 + time*0.45) * fbm(vWorld.xz*1.7 - time*0.35);
       float lapFoam = shoreBand * smoothstep(0.20, 0.44, foamN + 0.12*sin(time*1.1 + d*0.45));
@@ -757,7 +765,8 @@ const waterMat = new THREE.ShaderMaterial({
       float c3 = smoothstep(0.70, 0.95, 0.5+0.5*sin(d*1.10 + time*2.9 + fbm(vWorld.xz*0.13)*7.0)) * 0.5;
       float rollFoam = swashBand * (c1 + c2 + c3) * (0.35 + 0.75*fbm(vWorld.xz*1.6 + time*0.5));
       float foam = clamp(lapFoam + rollFoam, 0.0, 1.0);
-      col = mix(col, vec3(0.96,0.98,1.0), foam*0.8);
+      float foamBrightness = mix(0.25, 1.0, smoothstep(-0.05, 0.15, sunDir.y));
+      col = mix(col, vec3(0.96,0.98,1.0) * foamBrightness, foam*0.8);
       float dist = length(camPos - vWorld);
       col = mix(col, vec3(0.66,0.78,0.87), smoothstep(150.0, 650.0, dist));
       float alpha = mix(0.95, 0.62, shallowMix) + foam*0.3;
@@ -767,7 +776,7 @@ const water = new THREE.Mesh(new THREE.PlaneGeometry(1600,1600,256,256).rotateX(
 scene.add(water);
 
 // ================= BEACH SWASH =================
-const swashU = { time:{ value:0 } };
+const swashU = { time:{ value:0 }, sunDir:{ value:SUN_DIR } };
 (function buildSwash(){
   const SEGA=240, SEGR=18;
   const pos=[], aH=[], aPh=[], aAm=[], idx=[];
@@ -806,7 +815,7 @@ const swashU = { time:{ value:0 } };
         vec4 wp=modelMatrix*vec4(position,1.0); vW=wp.xyz;
         gl_Position=projectionMatrix*viewMatrix*wp; }`,
     fragmentShader:`
-      uniform float time;
+      uniform float time; uniform vec3 sunDir;
       varying float vH; varying float vPh; varying float vAm; varying vec3 vW;
       float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
       float noise(vec2 p){ vec2 i=floor(p),f=fract(p); vec2 u=f*f*(3.-2.*f);
@@ -827,9 +836,13 @@ const swashU = { time:{ value:0 } };
         float Llag = mix(-0.5, 1.55*vAm, max(sLag, 0.0));
         float wet  = smoothstep(max(L,Llag)+0.6, max(L,Llag)-0.6, vH) * (1.0 - film);
         wet *= clamp(0.5 + 0.5*sLag, 0.0, 1.0);
-        vec3 waterCol = mix(vec3(0.45,0.72,0.70), vec3(0.97,0.99,1.0), clamp(edge,0.,1.));
+        float dayAmt = clamp(sunDir.y * 4.0 + 0.5, 0.05, 1.0);
+        vec3 wetSand = vec3(0.30,0.24,0.16) * mix(0.12, 1.0, dayAmt);
+        vec3 waterColorBase = mix(vec3(0.04,0.10,0.12), vec3(0.45,0.72,0.70), dayAmt);
+        vec3 foamCol = vec3(0.97,0.99,1.0) * mix(0.3, 1.0, dayAmt);
+        vec3 waterCol = mix(waterColorBase, foamCol, clamp(edge,0.,1.));
         float filmA = film*(0.35 + 0.25*max(s,0.0)) + edge*0.6;
-        vec3 col = mix(vec3(0.30,0.24,0.16), waterCol, clamp(filmA*2.5, 0., 1.));
+        vec3 col = mix(wetSand, waterCol, clamp(filmA*2.5, 0., 1.));
         float alpha = clamp(filmA + wet*0.35, 0.0, 1.0);
         alpha *= smoothstep(1.9, 1.45, vH);
         alpha *= mix(0.45, 1.0, smoothstep(-0.9, -0.1, vH));
@@ -901,6 +914,20 @@ function animate(){
   sun.intensity = Math.max(0, sunH) * 2.5;
   sun.color.setHSL(0.1, 0.6, Math.max(0.5, 0.5 + sunH * 0.5));
 
+  // Update water colors dynamically for night mode
+  const dayColorDeep = new THREE.Color(0x06405e);
+  const dayColorShallow = new THREE.Color(0x2fb3ae);
+  const dayColorSkyCol = new THREE.Color(0xa9cfe8);
+
+  const nightColorDeep = new THREE.Color(0x020710);
+  const nightColorShallow = new THREE.Color(0x05131a);
+  const nightColorSkyCol = new THREE.Color(0x060c18);
+
+  const nightAmount = THREE.MathUtils.clamp(-sunH * 3, 0, 1);
+  waterUniforms.deep.value.copy(dayColorDeep).lerp(nightColorDeep, nightAmount);
+  waterUniforms.shallow.value.copy(dayColorShallow).lerp(nightColorShallow, nightAmount);
+  waterUniforms.skyCol.value.copy(dayColorSkyCol).lerp(nightColorSkyCol, nightAmount);
+
   // Hemisphere light: dim at night
   const dayAmount = THREE.MathUtils.clamp(sunH * 4 + 0.5, 0.05, 1.0);
   hemi.intensity = 0.08 + dayAmount * 0.55;
@@ -908,7 +935,6 @@ function animate(){
   hemi.groundColor.setHSL(0.28, 0.3, 0.05 + dayAmount * 0.2);
 
   // Moonlight: visible at night
-  const nightAmount = THREE.MathUtils.clamp(-sunH * 3, 0, 1);
   moonLight.intensity = nightAmount * 0.35;
 
   // Fog: darker at night
