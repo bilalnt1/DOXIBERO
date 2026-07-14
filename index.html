@@ -31,24 +31,112 @@ scene.fog = new THREE.FogExp2(0xa7c8de, 0.0021);
 const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 2000);
 const SUN_DIR = new THREE.Vector3(0.55, 0.42, -0.72).normalize();
 
+// ================= REAL-TIME SUN (Morocco UTC+1) =================
+function updateSunFromRealTime() {
+  const now = new Date();
+  const utcH = now.getUTCHours() + now.getUTCMinutes() / 60 + now.getUTCSeconds() / 3600;
+  const moroccoH = (utcH + 1) % 24; // UTC+1
+
+  // July Morocco: sunrise ~6:30, sunset ~20:30
+  const sunrise = 6.5, sunset = 20.5;
+  const noon = (sunrise + sunset) / 2; // 13.5
+  const dayLen = sunset - sunrise;     // 14h
+
+  let sunElev;
+  if (moroccoH >= sunrise && moroccoH <= sunset) {
+    const t = (moroccoH - sunrise) / dayLen;
+    sunElev = Math.sin(t * Math.PI) * 1.15; // max ~66°
+  } else {
+    const nightLen = 24 - dayLen;
+    let np = moroccoH > sunset ? (moroccoH - sunset) / nightLen
+                                : (moroccoH + 24 - sunset) / nightLen;
+    sunElev = -Math.sin(np * Math.PI) * 0.45;
+  }
+
+  // Sun azimuth: east at sunrise → south at noon → west at sunset
+  const dayProgress = (moroccoH - sunrise) / dayLen;
+  const sunAz = dayProgress * Math.PI; // 0=east, PI=west
+
+  SUN_DIR.set(
+    Math.cos(sunElev) * Math.sin(sunAz),
+    Math.sin(sunElev),
+    -Math.cos(sunElev) * Math.cos(sunAz)
+  ).normalize();
+
+  return { moroccoH, sunElev };
+}
+const _sunInfo = updateSunFromRealTime(); // init on load
+
 // ================= SKY =================
+const skyUniforms = { sunDir: { value: SUN_DIR }, uTime: { value: 0 } };
 const sky = new THREE.Mesh(
   new THREE.SphereGeometry(900, 32, 32),
   new THREE.ShaderMaterial({
     side: THREE.BackSide, fog:false, depthWrite:false,
-    uniforms: { sunDir: { value: SUN_DIR } },
+    uniforms: skyUniforms,
     vertexShader: `varying vec3 vDir;
       void main(){ vDir = normalize(position);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-    fragmentShader: `varying vec3 vDir; uniform vec3 sunDir;
+    fragmentShader: `varying vec3 vDir; uniform vec3 sunDir; uniform float uTime;
+      float hash2(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      float noise2(vec2 p){
+        vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
+        return mix(mix(hash2(i),hash2(i+vec2(1,0)),f.x),
+                   mix(hash2(i+vec2(0,1)),hash2(i+vec2(1,1)),f.x),f.y);
+      }
+      float fbm2(vec2 p){ float v=0.,a=.5; mat2 r=mat2(.8,.6,-.6,.8);
+        for(int i=0;i<4;i++){v+=a*noise2(p);p=r*p*2.0;a*=.5;} return v; }
       void main(){
         float h = clamp(vDir.y, 0.0, 1.0);
-        vec3 col = mix(vec3(0.78,0.87,0.94), vec3(0.22,0.47,0.78), pow(h, 0.65));
+        float sunH = sunDir.y; // sun height: >0 day, <0 night
         float s = max(dot(vDir, sunDir), 0.0);
-        col += vec3(1.0,0.9,0.7) * pow(s, 350.0) * 6.0;
-        col += vec3(1.0,0.85,0.6) * pow(s, 12.0) * 0.35;
-        col += vec3(1.0,0.95,0.85) * pow(s, 3.0) * 0.12;
-        col = mix(col, vec3(0.93,0.90,0.82), pow(1.0-h, 8.0)*0.5);
+
+        // --- DAY SKY ---
+        vec3 dayZenith = vec3(0.22,0.47,0.78);
+        vec3 dayHorizon = vec3(0.78,0.87,0.94);
+        vec3 daySky = mix(dayHorizon, dayZenith, pow(h, 0.65));
+
+        // --- SUNSET COLORS ---
+        vec3 sunsetHorizon = vec3(1.0,0.4,0.12);
+        float sunsetF = smoothstep(0.25, -0.05, sunH) * smoothstep(-0.25, -0.05, sunH);
+        daySky = mix(daySky, mix(sunsetHorizon, daySky, pow(h, 0.3)), sunsetF * 0.7);
+
+        // --- NIGHT SKY ---
+        vec3 nightZenith = vec3(0.02,0.03,0.08);
+        vec3 nightHorizon = vec3(0.04,0.06,0.14);
+        vec3 nightSky = mix(nightHorizon, nightZenith, pow(h, 0.5));
+
+        // --- BLEND DAY/NIGHT ---
+        float nightF = smoothstep(0.08, -0.15, sunH);
+        vec3 col = mix(daySky, nightSky, nightF);
+
+        // --- SUN DISK + GLOW ---
+        float sunVis = smoothstep(-0.05, 0.05, sunH);
+        col += vec3(1.0,0.9,0.7) * pow(s, 350.0) * 6.0 * sunVis;
+        col += vec3(1.0,0.85,0.6) * pow(s, 12.0) * 0.35 * sunVis;
+        vec3 glowColor = mix(vec3(1.0,0.4,0.15), vec3(1.0,0.95,0.85), smoothstep(0.0,0.3,sunH));
+        col += glowColor * pow(s, 3.0) * 0.15;
+
+        // --- HORIZON HAZE ---
+        col = mix(col, mix(sunsetHorizon*0.5, vec3(0.7,0.75,0.8), smoothstep(0.0,0.3,sunH)),
+                  exp(-abs(h)*8.0)*0.25*(1.0-nightF*0.5));
+
+        // --- STARS (night only) ---
+        if (nightF > 0.05 && h > 0.0) {
+          vec2 starUV = floor(vDir.xz * 300.0 + vDir.y * 300.0);
+          float star = step(0.997, hash2(starUV));
+          float twinkle = 0.6 + 0.4 * sin(uTime * 2.5 + hash2(starUV) * 50.0);
+          col += vec3(star * nightF * twinkle) * h;
+        }
+
+        // --- CLOUDS (dim at night) ---
+        if (h > 0.02) {
+          vec2 cuv = vDir.xz / (h + 0.08) * 2.5 + uTime * 0.015;
+          float cloud = smoothstep(0.4, 0.7, fbm2(cuv));
+          float cloudBright = mix(0.08, 1.0, smoothstep(-0.05, 0.3, sunH));
+          col = mix(col, vec3(cloudBright), cloud * 0.6 * smoothstep(0.0, 0.15, h));
+        }
+
         gl_FragColor = vec4(col, 1.0);
       }`
   })
@@ -64,7 +152,12 @@ sun.shadow.camera.left=-100; sun.shadow.camera.right=100;
 sun.shadow.camera.top=100; sun.shadow.camera.bottom=-100;
 sun.shadow.bias = -0.0004;
 scene.add(sun);
-scene.add(new THREE.HemisphereLight(0xcfe6f7, 0x3d5a45, 0.6));
+const hemi = new THREE.HemisphereLight(0xcfe6f7, 0x3d5a45, 0.6);
+scene.add(hemi);
+// Moonlight for night scenes
+const moonLight = new THREE.DirectionalLight(0x8899cc, 0);
+moonLight.position.set(-100, 80, 50);
+scene.add(moonLight);
 
 // ================= NOISE =================
 function hash(x,y){ const s=Math.sin(x*127.1+y*311.7)*43758.5453; return s-Math.floor(s); }
@@ -793,6 +886,42 @@ function animate(){
   waterUniforms.time.value = t;
   waterUniforms.camPos.value.copy(camera.position);
   swashU.time.value = t;
+  skyUniforms.uTime.value = t;
+
+  // --- REAL-TIME SUN UPDATE ---
+  const sunInfo = updateSunFromRealTime();
+  const sunH = SUN_DIR.y;
+
+  // Update sky + water sun direction
+  skyUniforms.sunDir.value.copy(SUN_DIR);
+  waterUniforms.sunDir.value.copy(SUN_DIR);
+
+  // Update directional light
+  sun.position.copy(SUN_DIR).multiplyScalar(260);
+  sun.intensity = Math.max(0, sunH) * 2.5;
+  sun.color.setHSL(0.1, 0.6, Math.max(0.5, 0.5 + sunH * 0.5));
+
+  // Hemisphere light: dim at night
+  const dayAmount = THREE.MathUtils.clamp(sunH * 4 + 0.5, 0.05, 1.0);
+  hemi.intensity = 0.08 + dayAmount * 0.55;
+  hemi.color.setHSL(0.58, 0.3, 0.1 + dayAmount * 0.7);
+  hemi.groundColor.setHSL(0.28, 0.3, 0.05 + dayAmount * 0.2);
+
+  // Moonlight: visible at night
+  const nightAmount = THREE.MathUtils.clamp(-sunH * 3, 0, 1);
+  moonLight.intensity = nightAmount * 0.35;
+
+  // Fog: darker at night
+  const fogR = THREE.MathUtils.lerp(0.04, 0.65, dayAmount);
+  const fogG = THREE.MathUtils.lerp(0.05, 0.78, dayAmount);
+  const fogB = THREE.MathUtils.lerp(0.10, 0.87, dayAmount);
+  scene.fog.color.setRGB(fogR, fogG, fogB);
+
+  // Campfire: brighter glow at night
+  const fireBoost = 1 + nightAmount * 2.5;
+  fireLight.intensity = (1.6 + Math.sin(t*13)*0.3 + Math.sin(t*29+1.7)*0.25) * fireBoost;
+  fireLight.distance = 28 + nightAmount * 40;
+  glow.scale.setScalar(6 + nightAmount * 8);
 
   clouds.children.forEach(c=>{
     c.position.x += c.userData.speed;
@@ -807,7 +936,6 @@ function animate(){
     p.fronds.forEach((f,i)=> f.rotation.x = f.userData.base + Math.sin(t*2.4 + p.phase + i*0.7)*0.07);
   });
 
-  fireLight.intensity = 1.6 + Math.sin(t*13)*0.3 + Math.sin(t*29+1.7)*0.25;
   flameO.scale.set(1+Math.sin(t*11)*0.12, 1+Math.sin(t*17+2)*0.22, 1+Math.cos(t*13)*0.12);
   flameY.scale.copy(flameO.scale);
   flameO.rotation.y = t*2.0; flameY.rotation.y = -t*2.6;
