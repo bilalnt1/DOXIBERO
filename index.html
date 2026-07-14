@@ -101,14 +101,22 @@ const sky = new THREE.Mesh(
         float sunsetF = smoothstep(0.25, -0.05, sunH) * smoothstep(-0.25, -0.05, sunH);
         daySky = mix(daySky, mix(sunsetHorizon, daySky, pow(h, 0.3)), sunsetF * 0.7);
 
-        // --- NIGHT SKY ---
-        vec3 nightZenith = vec3(0.02,0.03,0.08);
-        vec3 nightHorizon = vec3(0.04,0.06,0.14);
+        // --- NIGHT SKY GRADIENT ---
+        vec3 nightZenith = vec3(0.015,0.012,0.04); // Deep cosmic indigo-purple
+        vec3 nightHorizon = vec3(0.02,0.03,0.07);
         vec3 nightSky = mix(nightHorizon, nightZenith, pow(h, 0.5));
 
         // --- BLEND DAY/NIGHT ---
         float nightF = smoothstep(0.08, -0.15, sunH);
         vec3 col = mix(daySky, nightSky, nightF);
+
+        // --- CELESTIAL NEBULA GLOW (night only) ---
+        if (nightF > 0.05 && h > 0.0) {
+          float nebVal1 = fbm2(vDir.xz * 1.8 + vec2(vDir.y * 1.0)) * 0.5;
+          float nebVal2 = fbm2(vDir.xz * 3.5 - vec2(uTime * 0.003)) * 0.25;
+          vec3 nebCol = mix(vec3(0.03, 0.01, 0.08), vec3(0.01, 0.05, 0.06), vDir.y);
+          col += nebCol * (nebVal1 + nebVal2) * nightF * h;
+        }
 
         // --- SUN DISK + GLOW ---
         float sunVis = smoothstep(-0.05, 0.05, sunH);
@@ -117,23 +125,44 @@ const sky = new THREE.Mesh(
         vec3 glowColor = mix(vec3(1.0,0.4,0.15), vec3(1.0,0.95,0.85), smoothstep(0.0,0.3,sunH));
         col += glowColor * pow(s, 3.0) * 0.15;
 
+        // --- CRESCENT MOON + GLOW (night only) ---
+        if (nightF > 0.05) {
+          vec3 moonDir = normalize(vec3(-0.76, 0.61, 0.38));
+          float mDot = dot(vDir, moonDir);
+          float moonDisk = smoothstep(0.9962, 0.9965, mDot);
+          vec3 cutoutDir = normalize(vec3(-0.74, 0.62, 0.37));
+          float cutout = smoothstep(0.9962, 0.9965, dot(vDir, cutoutDir));
+          float moon = max(0.0, moonDisk - cutout) * nightF;
+          col += vec3(0.9, 0.94, 1.0) * moon * 2.0;
+
+          // moon glow
+          float moonG = pow(max(0.0, mDot), 45.0) * 0.22 * nightF;
+          col += vec3(0.75, 0.85, 1.0) * moonG;
+        }
+
         // --- HORIZON HAZE ---
         col = mix(col, mix(sunsetHorizon*0.5, vec3(0.7,0.75,0.8), smoothstep(0.0,0.3,sunH)),
                   exp(-abs(h)*8.0)*0.25*(1.0-nightF*0.5));
 
-        // --- STARS (night only) ---
+        // --- PREMIUM 3D-CELL STARS (night only) ---
         if (nightF > 0.05 && h > 0.0) {
-          vec2 starUV = floor(vDir.xz * 300.0 + vDir.y * 300.0);
-          float star = step(0.997, hash2(starUV));
-          float twinkle = 0.6 + 0.4 * sin(uTime * 2.5 + hash2(starUV) * 50.0);
-          col += vec3(star * nightF * twinkle) * h;
+          vec3 starPos = vDir * 230.0;
+          vec3 starCell = floor(starPos);
+          float starHash = hash2(starCell.xy + starCell.z * 37.0);
+          if (starHash > 0.9945) {
+            float twinkle = 0.35 + 0.65 * sin(uTime * (1.2 + starHash * 1.8) + starHash * 80.0);
+            float starSize = fract(starHash * 123.45);
+            vec3 starColor = mix(vec3(0.7, 0.88, 1.0), vec3(1.0, 0.92, 0.82), step(0.5, starSize));
+            starColor = mix(starColor, vec3(1.0), step(0.82, starSize));
+            col += starColor * (starSize * 0.75) * twinkle * nightF * pow(h, 0.25);
+          }
         }
 
         // --- CLOUDS (dim at night) ---
         if (h > 0.02) {
           vec2 cuv = vDir.xz / (h + 0.08) * 2.5 + uTime * 0.015;
           float cloud = smoothstep(0.4, 0.7, fbm2(cuv));
-          float cloudBright = mix(0.08, 1.0, smoothstep(-0.05, 0.3, sunH));
+          float cloudBright = mix(0.04, 1.0, smoothstep(-0.05, 0.3, sunH));
           col = mix(col, vec3(cloudBright), cloud * 0.6 * smoothstep(0.0, 0.15, h));
         }
 
@@ -679,7 +708,9 @@ function dogRelax(k=0.15){
 const waterUniforms = {
   time:{ value:0 }, sunDir:{ value:SUN_DIR }, camPos:{ value:camera.position },
   deep:{ value:new THREE.Color(0x06405e) }, shallow:{ value:new THREE.Color(0x2fb3ae) },
-  skyCol:{ value:new THREE.Color(0xa9cfe8) }, islandR:{ value:ISLAND_R }
+  skyCol:{ value:new THREE.Color(0xa9cfe8) }, islandR:{ value:ISLAND_R },
+  firePos:{ value:new THREE.Vector3(fireSpot.x, fireSpot.h, fireSpot.z) },
+  fireIntensity:{ value:0 }
 };
 const waterMat = new THREE.ShaderMaterial({
   uniforms: waterUniforms, transparent:true, fog:false,
@@ -722,7 +753,7 @@ const waterMat = new THREE.ShaderMaterial({
       gl_Position = projectionMatrix * viewMatrix * wp; }`,
   fragmentShader: `
     uniform float time; uniform vec3 sunDir, camPos, deep, shallow, skyCol;
-    uniform float islandR;
+    uniform float islandR; uniform vec3 firePos; uniform float fireIntensity;
     varying vec3 vWorld; varying vec3 vNormal;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float noise(vec2 p){
@@ -741,6 +772,17 @@ const waterMat = new THREE.ShaderMaterial({
       float shallowMix = smoothstep(islandR + 26.0, islandR - 6.0, d);
       vec3 col = mix(deep, shallow, shallowMix);
       col = mix(col, skyCol, fres*0.75);
+      // Campfire specular reflection (water surface near fire shore)
+      vec3 toFire = firePos - vWorld;
+      float distToFire = length(toFire);
+      if (distToFire < 55.0) {
+        vec3 fireD = normalize(toFire);
+        vec3 R_fire = reflect(-fireD, N);
+        float specFire = pow(max(dot(R_fire, V), 0.0), 16.0); // wider highlights
+        float atten = 1.0 / (1.0 + 0.12 * distToFire + 0.025 * distToFire * distToFire);
+        vec3 fireReflectCol = vec3(1.0, 0.42, 0.08) * specFire * fireIntensity * atten * 1.5;
+        col += fireReflectCol;
+      }
       vec3 lightD = sunDir;
       vec3 specColor = vec3(1.0, 0.95, 0.8) * 2.0;
       float specPower = 300.0;
@@ -769,7 +811,8 @@ const waterMat = new THREE.ShaderMaterial({
       col = mix(col, vec3(0.96,0.98,1.0) * foamBrightness, foam*0.8);
       float dist = length(camPos - vWorld);
       col = mix(col, vec3(0.66,0.78,0.87), smoothstep(150.0, 650.0, dist));
-      float alpha = mix(0.95, 0.62, shallowMix) + foam*0.3;
+      float nightAmt = clamp(-sunDir.y * 3.0, 0.0, 1.0);
+      float alpha = mix(0.98, mix(0.62, 0.99, nightAmt), shallowMix) + foam*0.3;
       gl_FragColor = vec4(col, clamp(alpha,0.0,1.0)); }`
 });
 const water = new THREE.Mesh(new THREE.PlaneGeometry(1600,1600,256,256).rotateX(-Math.PI/2), waterMat);
@@ -919,9 +962,9 @@ function animate(){
   const dayColorShallow = new THREE.Color(0x2fb3ae);
   const dayColorSkyCol = new THREE.Color(0xa9cfe8);
 
-  const nightColorDeep = new THREE.Color(0x020710);
-  const nightColorShallow = new THREE.Color(0x05131a);
-  const nightColorSkyCol = new THREE.Color(0x060c18);
+  const nightColorDeep = new THREE.Color(0x000103); // Opaque pitch-black deep water
+  const nightColorShallow = new THREE.Color(0x000205); // Opaque pitch-black shallow water
+  const nightColorSkyCol = new THREE.Color(0x02050b); // Very dark sky reflection
 
   const nightAmount = THREE.MathUtils.clamp(-sunH * 3, 0, 1);
   waterUniforms.deep.value.copy(dayColorDeep).lerp(nightColorDeep, nightAmount);
@@ -945,9 +988,11 @@ function animate(){
 
   // Campfire: brighter glow at night
   const fireBoost = 1 + nightAmount * 2.5;
-  fireLight.intensity = (1.6 + Math.sin(t*13)*0.3 + Math.sin(t*29+1.7)*0.25) * fireBoost;
+  const curFireInt = (1.6 + Math.sin(t*13)*0.3 + Math.sin(t*29+1.7)*0.25) * fireBoost;
+  fireLight.intensity = curFireInt;
   fireLight.distance = 28 + nightAmount * 40;
   glow.scale.setScalar(6 + nightAmount * 8);
+  waterUniforms.fireIntensity.value = curFireInt;
 
   clouds.children.forEach(c=>{
     c.position.x += c.userData.speed;
