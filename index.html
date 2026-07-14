@@ -14,7 +14,7 @@
 <body>
 <div id="hint">Drag to look around &middot; Scroll to zoom</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/objects/MarchingCubes.js"></script>
+
 <script>
 // ================= RENDERER / SCENE =================
 const renderer = new THREE.WebGLRenderer({ antialias:true });
@@ -425,127 +425,134 @@ for (let i=0;i<6;i++){
   scene.add(r); ravens.push(r);
 }
 
-// ================= METABALL DOG (continuous skin) =================
-const dogCoat  = new THREE.MeshStandardMaterial({ color:0xb98a4f, roughness:0.9 });
-const dogCoatD = new THREE.MeshStandardMaterial({ color:0x96683a, roughness:0.9 });
-const dogCream = new THREE.MeshStandardMaterial({ color:0xe6d3ae, roughness:0.9 });
-const dogDark  = new THREE.MeshStandardMaterial({ color:0x1a1512, roughness:0.55 });
+// ================= DOG (spine-torso, 3-joint legs, jaw, bark) =================
+const dogCoat  = new THREE.MeshStandardMaterial({ color:0xc08a48, roughness:0.88 });
+const dogCoatD = new THREE.MeshStandardMaterial({ color:0x9a6a34, roughness:0.9 });
+const dogCream = new THREE.MeshStandardMaterial({ color:0xe9d8b0, roughness:0.9 });
+const dogDark  = new THREE.MeshStandardMaterial({ color:0x18130f, roughness:0.5 });
+const dogBrown = new THREE.MeshStandardMaterial({ color:0x5a3a1e, roughness:0.4 });
+const dogPink  = new THREE.MeshStandardMaterial({ color:0xcf6f7a, roughness:0.65 });
 const dogGlint = new THREE.MeshBasicMaterial({ color:0xffffff });
 
 const dog = new THREE.Group(); scene.add(dog);
-const dogBody = new THREE.Group(); dogBody.position.set(0, 0.74, 0.40); dog.add(dogBody);
-const DB = new THREE.Group(); DB.position.set(0, -0.74, -0.40); dogBody.add(DB);
+const dogBody = new THREE.Group(); dogBody.position.set(0, 0.78, 0.40); dog.add(dogBody);
+const DB = new THREE.Group(); DB.position.set(0, -0.78, -0.40); dogBody.add(DB);
 
-const dogAnchors = [];
-function dBall(parent, x,y,z, r){
-  const o = new THREE.Object3D(); o.position.set(x,y,z);
-  parent.add(o);
-  const a = { o, r, r0:r }; dogAnchors.push(a); return a;
-}
-function dSph(r, seg=20){ return new THREE.SphereGeometry(r, seg, Math.max(10, seg-6)); }
+function dSph(r, seg=28){ return new THREE.SphereGeometry(r, seg, Math.max(14, seg-8)); }
 function dAdd(mesh, x,y,z, sx=1,sy=1,sz=1, parent=DB){
   mesh.position.set(x,y,z); mesh.scale.set(sx,sy,sz);
   mesh.castShadow = true; parent.add(mesh); return mesh;
 }
+function dCyl(r1,r2,h,mat){ const m=new THREE.Mesh(new THREE.CylinderGeometry(r1,r2,h,16),mat); m.castShadow=true; return m; }
 
-// torso blobs
-dBall(DB, 0,0.88,0.30, 0.24);
-const dogBreathe = [ dBall(DB, 0,0.80,0.18, 0.29), dBall(DB, 0,0.80,-0.05, 0.28) ];
-dBall(DB, 0,0.79,0.44, 0.27);
-dBall(DB, 0,0.80,-0.28, 0.24); dBall(DB, 0,0.84,-0.32, 0.21);
-dBall(DB, 0,0.81,-0.52, 0.24); dBall(DB, 0,0.70,0.10, 0.22);
-// extra muscle anchors for smoother shape
-dBall(DB, 0,0.85,0.05, 0.22); dBall(DB, 0,0.75,-0.15, 0.20);
+// --- spine-based torso ---
+const dogSpine = [
+  { z: 0.44, y:0.80, s:[0.25,0.27,0.28] },
+  { z: 0.30, y:0.79, s:[0.29,0.31,0.32] },
+  { z: 0.12, y:0.78, s:[0.31,0.33,0.36] },
+  { z:-0.06, y:0.78, s:[0.30,0.32,0.34] },
+  { z:-0.22, y:0.79, s:[0.27,0.29,0.30] },
+  { z:-0.38, y:0.80, s:[0.26,0.28,0.29] },
+  { z:-0.52, y:0.81, s:[0.23,0.25,0.25] }
+];
+let dogRibcage = null;
+dogSpine.forEach((p,i)=>{
+  const m = dAdd(new THREE.Mesh(dSph(1), dogCoat), 0,p.y,p.z, p.s[0],p.s[1],p.s[2]);
+  if (i===2) dogRibcage = m;
+});
+// cream underbelly patches
+dAdd(new THREE.Mesh(dSph(1), dogCream), 0,0.66,0.30, 0.20,0.19,0.26);
+dAdd(new THREE.Mesh(dSph(1), dogCream), 0,0.63,0.05, 0.23,0.20,0.38);
+dAdd(new THREE.Mesh(dSph(1), dogCream), 0,0.66,-0.20, 0.19,0.16,0.24);
 for (const s of [-1,1]){
-  dBall(DB, s*0.13,0.76,0.36, 0.15); dBall(DB, s*0.13,0.68,-0.45, 0.17);
-  dBall(DB, s*0.10,0.73,0.0, 0.13); // side ribs
+  dAdd(new THREE.Mesh(dSph(1), dogCoat), s*0.16,0.74,0.37, 0.13,0.24,0.22);
+  dAdd(new THREE.Mesh(dSph(1), dogCoat), s*0.17,0.70,-0.43, 0.14,0.26,0.24);
 }
 
-// neck & head
-const dogNeckPivot = new THREE.Group(); dogNeckPivot.position.set(0,0.90,0.44); DB.add(dogNeckPivot);
-dBall(dogNeckPivot, 0,0.05,0.02, 0.17);
-dBall(dogNeckPivot, 0,0.18,0.12, 0.15);
-dBall(dogNeckPivot, 0,0.30,0.21, 0.13);
-const dogHeadG = new THREE.Group(); dogHeadG.position.set(0,0.38,0.30); dogNeckPivot.add(dogHeadG);
-dBall(dogHeadG, 0,0.01,0.0, 0.185);
-dBall(dogHeadG, 0,0.08,0.10, 0.13);
-dBall(dogHeadG, 0,0.0,0.24, 0.10);
-dBall(dogHeadG, 0,0.0,0.33, 0.08);
-for (const s of [-1,1]) dBall(dogHeadG, s*0.08,-0.03,0.08, 0.09);
-
-// face details
-dAdd(new THREE.Mesh(dSph(0.05), dogDark), 0,0.01,0.43, 1,0.8,0.9, dogHeadG);
-const dogEyes = [];
-for (const s of [-1,1]){
-  const e = dAdd(new THREE.Mesh(dSph(0.038), dogDark), s*0.10,0.07,0.165, 1,1,1, dogHeadG);
-  dAdd(new THREE.Mesh(dSph(0.012), dogGlint), s*0.11,0.085,0.19, 1,1,1, dogHeadG);
-  dogEyes.push(e);
-}
-// tongue (for panting)
-const dogTongue = dAdd(new THREE.Mesh(new THREE.BoxGeometry(0.06,0.02,0.16),
-  new THREE.MeshStandardMaterial({color:0xd45a5a, roughness:0.6})), 0,-0.08,0.36, 1,1,1, dogHeadG);
-dogTongue.visible = false;
-
-const dogEarPivots = [];
-for (const s of [-1,1]){
-  const ep = new THREE.Group(); ep.position.set(s*0.145,0.15,-0.02);
-  ep.rotation.set(0.15, 0, s*0.55); dogHeadG.add(ep);
-  dAdd(new THREE.Mesh(dSph(0.055), dogCoatD), 0,0,0, 1,1,1, ep);
-  dAdd(new THREE.Mesh(dSph(1), dogCoatD), s*0.02,-0.13,0, 0.085,0.17,0.045, ep);
-  dogEarPivots.push({ ep, s });
-}
+// --- neck & head ---
+const dogNeckPivot = new THREE.Group(); dogNeckPivot.position.set(0,0.90,0.42); DB.add(dogNeckPivot);
+dAdd(new THREE.Mesh(dSph(1), dogCoat), 0,0.00,0.00, 0.22,0.22,0.22, dogNeckPivot);
+dAdd(new THREE.Mesh(dSph(0.18), dogCoat), 0,0.13,0.09, 1,1,1, dogNeckPivot);
+dAdd(new THREE.Mesh(dSph(0.16), dogCoat), 0,0.25,0.17, 1,1,1, dogNeckPivot);
+dAdd(new THREE.Mesh(dSph(1), dogCream), 0,0.08,0.17, 0.13,0.16,0.10, dogNeckPivot);
 // collar
 const collar = new THREE.Mesh(new THREE.TorusGeometry(0.155,0.028,6,14),
   new THREE.MeshStandardMaterial({ color:0xa8302a, roughness:0.7 }));
 collar.rotation.x = 0.9; collar.position.set(0,0.10,0.07); dogNeckPivot.add(collar);
 
-// legs
-function makeDogLeg(x, z){
-  const hip = new THREE.Group(); hip.position.set(x, 0.74, z); DB.add(hip);
-  dBall(hip, 0,0,0, 0.11); dBall(hip, 0,-0.13,0, 0.09); dBall(hip, 0,-0.26,0, 0.078);
-  const knee = new THREE.Group(); knee.position.y = -0.38; hip.add(knee);
-  dBall(knee, 0,0,0, 0.075); dBall(knee, 0,-0.11,0, 0.065);
-  dBall(knee, 0,-0.22,0, 0.06); dBall(knee, 0,-0.31,0.01, 0.06);
-  dBall(knee, 0,-0.35,0.05, 0.068);
-  for (let i=-1;i<=1;i++)
-    dAdd(new THREE.Mesh(dSph(0.028), dogCream), i*0.042,-0.375,0.135, 1,1,1, knee);
-  return { hip, knee };
+const dogHeadG = new THREE.Group(); dogHeadG.position.set(0,0.38,0.28); dogNeckPivot.add(dogHeadG);
+dAdd(new THREE.Mesh(dSph(0.205), dogCoat), 0,0,0, 0.95,0.92,1.02, dogHeadG);
+dAdd(new THREE.Mesh(dSph(0.15), dogCoat), 0,0.09,0.05, 1.12,0.88,1.0, dogHeadG);
+for (const s of [-1,1])
+  dAdd(new THREE.Mesh(dSph(0.10), dogCoat), s*0.10,-0.04,0.07, 1,1,1, dogHeadG);
+dAdd(new THREE.Mesh(dSph(1), dogCoat), 0,0.04,0.22, 0.09,0.068,0.15, dogHeadG);
+dAdd(new THREE.Mesh(dSph(1), dogCoat), 0,-0.015,0.27, 0.095,0.078,0.17, dogHeadG);
+dAdd(new THREE.Mesh(dSph(1), dogDark), 0,0.035,0.425, 0.055,0.042,0.05, dogHeadG);
+// jaw (opens for panting/barking)
+const dogJawG = new THREE.Group(); dogJawG.position.set(0,-0.09,0.10); dogHeadG.add(dogJawG);
+dAdd(new THREE.Mesh(dSph(1), dogCoat), 0,-0.01,0.13, 0.075,0.048,0.16, dogJawG);
+dAdd(new THREE.Mesh(dSph(1), dogCoat), 0,-0.02,0.02, 0.09,0.06,0.10, dogJawG);
+const dogTongue = dAdd(new THREE.Mesh(dSph(1), dogPink), 0,0.015,0.16, 0.05,0.018,0.02, dogJawG);
+// eyes: brown iris + dark pupil + white glint
+const dogEyes = [];
+for (const s of [-1,1]){
+  const e = dAdd(new THREE.Mesh(dSph(0.042), dogBrown), s*0.095,0.065,0.155, 1,1.1,0.8, dogHeadG);
+  dAdd(new THREE.Mesh(dSph(0.02), dogDark), s*0.10,0.065,0.185, 1,1,0.6, dogHeadG);
+  dAdd(new THREE.Mesh(dSph(0.011), dogGlint), s*0.112,0.082,0.19, 1,1,1, dogHeadG);
+  dogEyes.push(e);
 }
-const dFL=makeDogLeg(0.20,0.40), dFR=makeDogLeg(-0.20,0.40),
-      dRL=makeDogLeg(0.21,-0.44), dRR=makeDogLeg(-0.21,-0.44);
+// ears
+const dogEarPivots = [];
+for (const s of [-1,1]){
+  const ep = new THREE.Group(); ep.position.set(s*0.15,0.14,-0.03);
+  ep.rotation.set(0.18, 0, s*0.52); dogHeadG.add(ep);
+  dAdd(new THREE.Mesh(dSph(0.06), dogCoatD), 0,0,0, 1,1,1, ep);
+  dAdd(new THREE.Mesh(dSph(1), dogCoatD), s*0.02,-0.14,0, 0.09,0.19,0.05, ep);
+  dogEarPivots.push({ ep, s });
+}
 
-// tail
-const dogWagPivot = new THREE.Group(); dogWagPivot.position.set(0,0.85,-0.58); DB.add(dogWagPivot);
-dBall(dogWagPivot, 0,0,-0.02, 0.10);
+// --- legs: 3-joint (hip/knee/ankle) ---
+function makeDogLeg(x, z, front){
+  const rest = front ? { hip:0.28, knee:-0.32, ankle:0.10 }
+                     : { hip:-0.45, knee:1.00, ankle:-0.72 };
+  const L1 = front?0.32:0.34, L2 = front?0.30:0.32, P = front?0.10:0.14;
+  const hip = new THREE.Group(); hip.position.set(x, front?0.76:0.78, z); DB.add(hip);
+  dAdd(new THREE.Mesh(dSph(1), dogCoat), 0,-0.04,0, 0.11,0.18,0.14, hip);
+  const up = dCyl(front?0.075:0.09, 0.052, L1, dogCoat); up.position.y=-L1/2; hip.add(up);
+  const knee = new THREE.Group(); knee.position.y=-L1; hip.add(knee);
+  dAdd(new THREE.Mesh(dSph(0.058), dogCoat), 0,0,0, 1,1,1, knee);
+  const lo = dCyl(0.05, 0.037, L2, dogCoat); lo.position.y=-L2/2; knee.add(lo);
+  const ankle = new THREE.Group(); ankle.position.y=-L2; knee.add(ankle);
+  dAdd(new THREE.Mesh(dSph(0.045), dogCoat), 0,0,0, 1,1,1, ankle);
+  const pas = dCyl(0.036, 0.032, P, dogCoat); pas.position.y=-P/2; ankle.add(pas);
+  dAdd(new THREE.Mesh(dSph(1), dogCoat), 0,-P,0.05, 0.08,0.05,0.115, ankle);
+  for (let i=-1;i<=1;i++){
+    dAdd(new THREE.Mesh(dSph(0.028), dogCoat), i*0.042,-P-0.012,0.13, 1,1,1, ankle);
+    dAdd(new THREE.Mesh(dSph(1), dogDark), i*0.042,-P-0.02,0.155, 0.012,0.01,0.018, ankle);
+  }
+  hip.rotation.x = rest.hip; knee.rotation.x = rest.knee; ankle.rotation.x = rest.ankle;
+  return { hip, knee, ankle, rest };
+}
+const dFL=makeDogLeg(0.20,0.38,true), dFR=makeDogLeg(-0.20,0.38,true),
+      dRL=makeDogLeg(0.21,-0.44,false), dRR=makeDogLeg(-0.21,-0.44,false);
+const DOG_LEGS = [dFL,dFR,dRL,dRR];
+
+// --- tail ---
+const dogWagPivot = new THREE.Group(); dogWagPivot.position.set(0,0.86,-0.58); DB.add(dogWagPivot);
+dAdd(new THREE.Mesh(dSph(0.09), dogCoat), 0,0,-0.02, 1,1,1, dogWagPivot);
 const dt1 = new THREE.Group(); dt1.rotation.x = -0.8; dogWagPivot.add(dt1);
-dAdd(new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.037,0.26,10), dogCoat), 0,0.13,0, 1,1,1, dt1);
+dAdd(dCyl(0.05,0.037,0.26,dogCoat), 0,0.13,0, 1,1,1, dt1);
 const dt2 = new THREE.Group(); dt2.position.y = 0.26; dt2.rotation.x = -0.28; dt1.add(dt2);
 dAdd(new THREE.Mesh(dSph(0.038), dogCoat), 0,0,0, 1,1,1, dt2);
-dAdd(new THREE.Mesh(new THREE.CylinderGeometry(0.037,0.024,0.22,10), dogCoat), 0,0.11,0, 1,1,1, dt2);
+dAdd(dCyl(0.037,0.024,0.22,dogCoat), 0,0.11,0, 1,1,1, dt2);
 const dt3 = new THREE.Group(); dt3.position.y = 0.22; dt3.rotation.x = -0.28; dt2.add(dt3);
 dAdd(new THREE.Mesh(dSph(0.026), dogCoat), 0,0,0, 1,1,1, dt3);
-dAdd(new THREE.Mesh(new THREE.CylinderGeometry(0.024,0.01,0.18,10), dogCoat), 0,0.09,0, 1,1,1, dt3);
-dAdd(new THREE.Mesh(dSph(0.035), dogCream), 0,0.18,0, 1,1.4,1, dt3);
-
-// MARCHING CUBES SKIN
-const SKIN_S = 1.5;
-const dogSkin = new THREE.MarchingCubes(56, dogCoat, false, false);
-dogSkin.position.set(0, 0.7, 0); dogSkin.scale.set(SKIN_S, SKIN_S, SKIN_S);
-dogSkin.isolation = 80; dogSkin.castShadow = true; dogSkin.frustumCulled = false;
-dog.add(dogSkin);
-
-const _dv = new THREE.Vector3();
-function updateDogSkin(){
-  dog.updateMatrixWorld(true); dogSkin.reset();
-  for (const a of dogAnchors){
-    a.o.getWorldPosition(_dv); dogSkin.worldToLocal(_dv);
-    const r01 = (a.r * 1.0) / (SKIN_S * 2);
-    dogSkin.addBall((_dv.x+1)/2, (_dv.y+1)/2, (_dv.z+1)/2, r01*r01*92, 12);
-  }
-}
+dAdd(dCyl(0.024,0.01,0.18,dogCoat), 0,0.09,0, 1,1,1, dt3);
+dAdd(new THREE.Mesh(dSph(1), dogCoat), 0,0.16,0, 0.04,0.08,0.04, dt3);
+dog.traverse(o=>{ if(o.isMesh) o.castShadow = true; });
 
 // DOG AI (island navigation)
-const dogAI = { mode:'walk', until:0, target:null, speed:2.0, heading:0, drop:0 };
+const dogAI = { mode:'walk', until:0, target:null, speed:1.5, heading:0, drop:0 };
 function dogPickTarget(){
   const r = Math.random();
   if (r < 0.35) return { x:fire.position.x+(Math.random()-0.5)*9, z:fire.position.z+(Math.random()-0.5)*9 };
@@ -555,19 +562,24 @@ function dogPickTarget(){
 }
 function dogNext(t){
   const r = Math.random();
-  if      (r < 0.25){ dogAI.mode='walk';  dogAI.speed=1.5; dogAI.target=dogPickTarget(); dogAI.until=t+10; }
-  else if (r < 0.40){ dogAI.mode='run';   dogAI.speed=4.8; dogAI.target=dogPickTarget(); dogAI.until=t+7; }
-  else if (r < 0.55){ dogAI.mode='sniff'; dogAI.until=t+3+Math.random()*3; }
-  else if (r < 0.68){ dogAI.mode='play';  dogAI.until=t+5+Math.random()*3; }
-  else if (r < 0.78){ dogAI.mode='sit';   dogAI.until=t+4+Math.random()*4; }
-  else if (r < 0.88){ dogAI.mode='lie';   dogAI.until=t+5+Math.random()*5; }
+  if      (r < 0.22){ dogAI.mode='walk';  dogAI.speed=1.5; dogAI.target=dogPickTarget(); dogAI.until=t+9; }
+  else if (r < 0.36){ dogAI.mode='run';   dogAI.speed=4.8; dogAI.target=dogPickTarget(); dogAI.until=t+6; }
+  else if (r < 0.49){ dogAI.mode='sniff'; dogAI.until=t+3+Math.random()*3; }
+  else if (r < 0.60){ dogAI.mode='sit';   dogAI.until=t+4+Math.random()*4; }
+  else if (r < 0.70){ dogAI.mode='lie';   dogAI.until=t+5+Math.random()*5; }
+  else if (r < 0.80){ dogAI.mode='play';  dogAI.until=t+5+Math.random()*3; }
+  else if (r < 0.90){ dogAI.mode='bark';  dogAI.until=t+2.5+Math.random()*2; }
   else              { dogAI.mode='idle';  dogAI.until=t+3+Math.random()*3; }
 }
 dog.position.set(fireSpot.x+4, heightAt(fireSpot.x+4, fireSpot.z+3), fireSpot.z+3);
 
-function setDogLeg(L, hipR, kneeR, k=0.1){
+function setDogLeg(L, hipR, kneeR, ankleR, k=0.1){
   L.hip.rotation.x = THREE.MathUtils.lerp(L.hip.rotation.x, hipR, k);
   L.knee.rotation.x = THREE.MathUtils.lerp(L.knee.rotation.x, kneeR, k);
+  L.ankle.rotation.x = THREE.MathUtils.lerp(L.ankle.rotation.x, ankleR, k);
+}
+function dogRelax(k=0.15){
+  DOG_LEGS.forEach(L=> setDogLeg(L, L.rest.hip, L.rest.knee, L.rest.ankle, k));
 }
 
 // ================= OCEAN =================
@@ -844,7 +856,7 @@ function animate(){
     }
   });
 
-  // ===== DOG (metaball skin) =====
+  // ===== DOG (spine-torso, 3-joint legs) =====
   const dogMoving = dogAI.mode==='walk' || dogAI.mode==='run';
   if (t > dogAI.until ||
       (dogMoving && dogAI.target && distTo(dogAI.target, dog.position.x, dog.position.z) < 1.2)) dogNext(t);
@@ -859,26 +871,27 @@ function animate(){
   }
   dog.rotation.y = dogAI.heading;
 
-  // breathing + blinking
-  const br = 1 + 0.04*Math.sin(t*2.4);
-  dogBreathe.forEach(a=> a.r = a.r0*br);
+  // always alive: breathing, blinking, panting
+  dogRibcage.scale.set(0.31,0.33*(1+0.03*Math.sin(t*2.4)),0.36);
   dogEyes.forEach((e,i)=>{
     const f = (t + i*0.05) % 4.3;
-    e.scale.y = 1 - 0.9*Math.max(0, 1 - Math.abs(f-0.08)/0.08);
+    const blink = Math.max(0, 1 - Math.abs(f-0.08)/0.08);
+    e.scale.y = 1.1*(1 - 0.9*blink);
   });
-
-  // panting (tongue visible when running or after running)
-  dogTongue.visible = dogAI.mode==='run' || dogAI.mode==='play';
-  if (dogTongue.visible) dogTongue.position.y = -0.08 + Math.sin(t*8)*0.01;
+  const pant = (dogAI.mode==='run'||dogAI.mode==='play') ? 1 : 0;
+  dogJawG.rotation.x = lerp(dogJawG.rotation.x, pant*(0.28+0.06*Math.sin(t*13)), 0.08);
+  dogTongue.scale.z = lerp(dogTongue.scale.z, 0.02 + pant*0.12, 0.08);
+  dogTongue.position.z = 0.16 + dogTongue.scale.z*0.5;
 
   let bounce = 0, dropT = 0, earFlop = 0;
 
   if (dogAI.mode==='walk'){
-    const w = 4.6, A = 0.55, ph = t*w;
+    const w = 4.6, A = 0.5, ph = t*w;
     [{l:dRL,o:0},{l:dFL,o:Math.PI*0.5},{l:dRR,o:Math.PI},{l:dFR,o:Math.PI*1.5}].forEach(p=>{
-      const c = ph + p.o;
-      p.l.hip.rotation.x = A*Math.sin(c);
-      p.l.knee.rotation.x = -0.95*A*Math.max(0, Math.sin(c + 1.0));
+      const c = ph + p.o, r = p.l.rest;
+      p.l.hip.rotation.x = r.hip + A*Math.sin(c);
+      p.l.knee.rotation.x = r.knee - 0.85*A*Math.max(0, Math.sin(c + 1.0));
+      p.l.ankle.rotation.x = r.ankle + 0.5*A*Math.max(0, Math.sin(c + 1.6));
     });
     bounce = 0.02*Math.abs(Math.sin(ph*2));
     dogBody.rotation.z = 0.035*Math.sin(ph);
@@ -889,9 +902,10 @@ function animate(){
   } else if (dogAI.mode==='run'){
     const w = 11, ph = t*w;
     [{l:dRL,o:0},{l:dRR,o:0.3},{l:dFL,o:Math.PI},{l:dFR,o:Math.PI+0.3}].forEach(p=>{
-      const c = ph + p.o;
-      p.l.hip.rotation.x = 1.0*Math.sin(c);
-      p.l.knee.rotation.x = -1.0*Math.max(0, Math.sin(c + 1.1));
+      const c = ph + p.o, r = p.l.rest;
+      p.l.hip.rotation.x = r.hip + 0.9*Math.sin(c);
+      p.l.knee.rotation.x = r.knee - 0.9*Math.max(0, Math.sin(c + 1.1));
+      p.l.ankle.rotation.x = r.ankle + 0.7*Math.max(0, Math.sin(c + 1.7));
     });
     dogBody.rotation.x = 0.09*Math.sin(ph + 0.6);
     dogBody.rotation.z = lerp(dogBody.rotation.z, 0, 0.2);
@@ -900,7 +914,7 @@ function animate(){
     dogHeadG.rotation.y = lerp(dogHeadG.rotation.y, 0, 0.1);
     earFlop = 0.35*Math.sin(ph + 1);
   } else if (dogAI.mode==='sniff'){
-    [dFL,dFR,dRL,dRR].forEach(L=>{ L.hip.rotation.x*=0.85; L.knee.rotation.x*=0.85; });
+    dogRelax();
     dogBody.rotation.x = lerp(dogBody.rotation.x, 0.04, 0.1);
     dogBody.rotation.z = lerp(dogBody.rotation.z, 0, 0.2);
     dogNeckPivot.rotation.x = lerp(dogNeckPivot.rotation.x, 1.05 + Math.sin(t*3.0)*0.1, 0.12);
@@ -908,16 +922,16 @@ function animate(){
   } else if (dogAI.mode==='sit'){
     dogBody.rotation.x = lerp(dogBody.rotation.x, -0.45, 0.07);
     dogBody.rotation.z = lerp(dogBody.rotation.z, 0, 0.2);
-    setDogLeg(dFL, 0.45, 0.05); setDogLeg(dFR, 0.45, 0.05);
-    setDogLeg(dRL, -0.90, 1.75, 0.07); setDogLeg(dRR, -0.90, 1.75, 0.07);
+    setDogLeg(dFL, 0.65, -0.25, 0.10); setDogLeg(dFR, 0.65, -0.25, 0.10);
+    setDogLeg(dRL, -0.95, 1.75, -1.15, 0.07); setDogLeg(dRR, -0.95, 1.75, -1.15, 0.07);
     dogNeckPivot.rotation.x = lerp(dogNeckPivot.rotation.x, 0.30, 0.1);
     dogHeadG.rotation.y = Math.sin(t*0.7)*0.5;
   } else if (dogAI.mode==='lie'){
     dropT = 0.42;
     dogBody.rotation.x = lerp(dogBody.rotation.x, -0.05, 0.08);
     dogBody.rotation.z = lerp(dogBody.rotation.z, 0, 0.2);
-    setDogLeg(dFL, -1.35, 1.45, 0.07); setDogLeg(dFR, -1.35, 1.45, 0.07);
-    setDogLeg(dRL, -1.00, 1.70, 0.07); setDogLeg(dRR, -1.00, 1.70, 0.07);
+    setDogLeg(dFL, -1.35, 1.45, 0.0, 0.07); setDogLeg(dFR, -1.35, 1.45, 0.0, 0.07);
+    setDogLeg(dRL, -1.00, 1.70, -1.25, 0.07); setDogLeg(dRR, -1.00, 1.70, -1.25, 0.07);
     dogNeckPivot.rotation.x = lerp(dogNeckPivot.rotation.x, 0.35, 0.06);
     dogHeadG.rotation.y = Math.sin(t*0.5)*0.35;
   } else if (dogAI.mode==='play'){
@@ -925,39 +939,52 @@ function animate(){
     if (cyc < 1.0){
       dropT = 0.16;
       dogBody.rotation.x = lerp(dogBody.rotation.x, 0.22, 0.1);
-      setDogLeg(dFL, -1.10, 0.60, 0.12); setDogLeg(dFR, -1.10, 0.60, 0.12);
-      setDogLeg(dRL, -0.22, 0, 0.12); setDogLeg(dRR, -0.22, 0, 0.12);
+      setDogLeg(dFL, -1.10, 0.60, 0.2, 0.12); setDogLeg(dFR, -1.10, 0.60, 0.2, 0.12);
+      setDogLeg(dRL, -0.35, 0.90, -0.60, 0.12); setDogLeg(dRR, -0.35, 0.90, -0.60, 0.12);
       dogNeckPivot.rotation.x = lerp(dogNeckPivot.rotation.x, -0.45, 0.12);
     } else {
       dogBody.rotation.x = lerp(dogBody.rotation.x, 0, 0.2);
       bounce = Math.abs(Math.sin(t*10))*0.16;
       dogAI.heading += dt*4.2;
       [{l:dFL,o:0},{l:dRR,o:0},{l:dFR,o:Math.PI},{l:dRL,o:Math.PI}].forEach(p=>
-        p.l.hip.rotation.x = Math.sin(t*10+p.o)*0.7);
+        p.l.hip.rotation.x = p.l.rest.hip + Math.sin(t*10+p.o)*0.7);
       dogNeckPivot.rotation.x = lerp(dogNeckPivot.rotation.x, -0.1, 0.2);
       earFlop = 0.4*Math.sin(t*10);
     }
     dogBody.rotation.z = lerp(dogBody.rotation.z, 0, 0.2);
+  } else if (dogAI.mode==='bark'){
+    dogRelax();
+    const burstGate = Math.sin(t*1.4) > -0.3 ? 1 : 0;
+    const snap = Math.pow(Math.max(0, Math.sin(t*9)), 3) * burstGate;
+    dogJawG.rotation.x = 0.5*snap;
+    dogHeadG.rotation.x = -0.24*snap;
+    dogNeckPivot.rotation.x = lerp(dogNeckPivot.rotation.x, -0.12, 0.15);
+    dogBody.rotation.x = lerp(dogBody.rotation.x, 0.05*snap, 0.5);
+    dogBody.rotation.z = lerp(dogBody.rotation.z, 0, 0.2);
+    bounce = 0.02*snap;
+    earFlop = -0.25*snap - 0.1;
+    dogHeadG.rotation.y = lerp(dogHeadG.rotation.y, 0, 0.2);
   } else { // idle
-    [dFL,dFR,dRL,dRR].forEach(L=>{ L.hip.rotation.x*=0.85; L.knee.rotation.x*=0.85; });
+    dogRelax();
     dogBody.rotation.x = lerp(dogBody.rotation.x, 0, 0.1);
     dogBody.rotation.z = lerp(dogBody.rotation.z, 0, 0.2);
     dogNeckPivot.rotation.x = lerp(dogNeckPivot.rotation.x, -0.05, 0.1);
     dogHeadG.rotation.y = Math.sin(t*0.6)*0.55;
+    dogHeadG.rotation.z = lerp(dogHeadG.rotation.z, Math.sin(t*0.35)>0.75?0.3:0, 0.05);
     earFlop = (Math.sin(t*3.7)>0.99 ? 0.5 : 0);
   }
+  if (dogAI.mode!=='idle') dogHeadG.rotation.z = lerp(dogHeadG.rotation.z, 0, 0.1);
+  if (dogAI.mode!=='bark') dogHeadG.rotation.x = lerp(dogHeadG.rotation.x, 0, 0.1);
 
-  dogEarPivots.forEach(e=> e.ep.rotation.x = lerp(e.ep.rotation.x, 0.15 + earFlop, 0.3));
+  dogEarPivots.forEach(e=> e.ep.rotation.x = lerp(e.ep.rotation.x, 0.18 + earFlop, 0.3));
   dogAI.drop = lerp(dogAI.drop, dropT, 0.06);
   dog.position.y = heightAt(dog.position.x, dog.position.z) + 0.02 + bounce - dogAI.drop;
 
-  const wagSpd = dogAI.mode==='play' ? 14 : (dogMoving ? (dogAI.speed>3?11:8) : (dogAI.mode==='lie'?2.5:4.5));
-  const wagAmp = dogAI.mode==='play' ? 0.6 : (dogMoving ? 0.4 : 0.25);
+  const wagSpd = dogAI.mode==='play' ? 14 : (dogAI.mode==='bark' ? 9 : (dogMoving ? (dogAI.speed>3?11:8) : (dogAI.mode==='lie'?2.5:4.5)));
+  const wagAmp = dogAI.mode==='play' ? 0.6 : (dogAI.mode==='bark' ? 0.35 : (dogMoving ? 0.4 : 0.25));
   dogWagPivot.rotation.y = Math.sin(t*wagSpd)*wagAmp;
   dt2.rotation.y = Math.sin(t*wagSpd-0.5)*wagAmp*0.5;
   dt3.rotation.y = Math.sin(t*wagSpd-1.0)*wagAmp*0.4;
-
-  updateDogSkin();
 
   if (autoRotate) theta += 0.0009;
   updateCamera();
