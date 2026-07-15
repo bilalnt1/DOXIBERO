@@ -31,42 +31,6 @@ scene.fog = new THREE.FogExp2(0xa7c8de, 0.0021);
 const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 2000);
 const SUN_DIR = new THREE.Vector3(0.55, 0.42, -0.72).normalize();
 
-// ================= REAL-TIME SUN (Morocco UTC+1) =================
-function updateSunFromRealTime() {
-  const now = new Date();
-  const utcH = now.getUTCHours() + now.getUTCMinutes() / 60 + now.getUTCSeconds() / 3600;
-  const moroccoH = (utcH + 1) % 24; // UTC+1
-
-  // July Morocco: sunrise ~6:30, sunset ~20:30
-  const sunrise = 6.5, sunset = 20.5;
-  const noon = (sunrise + sunset) / 2; // 13.5
-  const dayLen = sunset - sunrise;     // 14h
-
-  let sunElev;
-  if (moroccoH >= sunrise && moroccoH <= sunset) {
-    const t = (moroccoH - sunrise) / dayLen;
-    sunElev = Math.sin(t * Math.PI) * 1.15; // max ~66°
-  } else {
-    const nightLen = 24 - dayLen;
-    let np = moroccoH > sunset ? (moroccoH - sunset) / nightLen
-                                : (moroccoH + 24 - sunset) / nightLen;
-    sunElev = -Math.sin(np * Math.PI) * 0.45;
-  }
-
-  // Sun azimuth: east at sunrise → south at noon → west at sunset
-  const dayProgress = (moroccoH - sunrise) / dayLen;
-  const sunAz = dayProgress * Math.PI; // 0=east, PI=west
-
-  SUN_DIR.set(
-    Math.cos(sunElev) * Math.sin(sunAz),
-    Math.sin(sunElev),
-    -Math.cos(sunElev) * Math.cos(sunAz)
-  ).normalize();
-
-  return { moroccoH, sunElev };
-}
-const _sunInfo = updateSunFromRealTime(); // init on load
-
 // ================= SKY =================
 const skyUniforms = { sunDir: { value: SUN_DIR }, uTime: { value: 0 } };
 const sky = new THREE.Mesh(
@@ -949,54 +913,15 @@ function animate(){
   swashU.time.value = t;
   skyUniforms.uTime.value = t;
 
-  // --- REAL-TIME SUN UPDATE ---
-  const sunInfo = updateSunFromRealTime();
-  const sunH = SUN_DIR.y;
-
-  // Update sky + water sun direction
+  // Update sky + water sun direction (fixed to day)
   skyUniforms.sunDir.value.copy(SUN_DIR);
   waterUniforms.sunDir.value.copy(SUN_DIR);
 
-  // Update directional light
-  sun.position.copy(SUN_DIR).multiplyScalar(260);
-  sun.intensity = Math.max(0, sunH) * 2.5;
-  sun.color.setHSL(0.1, 0.6, Math.max(0.5, 0.5 + sunH * 0.5));
-
-  // Update water colors dynamically for night mode
-  const dayColorDeep = new THREE.Color(0x06405e);
-  const dayColorShallow = new THREE.Color(0x2fb3ae);
-  const dayColorSkyCol = new THREE.Color(0xa9cfe8);
-
-  const nightColorDeep = new THREE.Color(0x000103); // Opaque pitch-black deep water
-  const nightColorShallow = new THREE.Color(0x000205); // Opaque pitch-black shallow water
-  const nightColorSkyCol = new THREE.Color(0x02050b); // Very dark sky reflection
-
-  const nightAmount = THREE.MathUtils.clamp(-sunH * 3, 0, 1);
-  waterUniforms.deep.value.copy(dayColorDeep).lerp(nightColorDeep, nightAmount);
-  waterUniforms.shallow.value.copy(dayColorShallow).lerp(nightColorShallow, nightAmount);
-  waterUniforms.skyCol.value.copy(dayColorSkyCol).lerp(nightColorSkyCol, nightAmount);
-
-  // Hemisphere light: dim at night
-  const dayAmount = THREE.MathUtils.clamp(sunH * 4 + 0.5, 0.05, 1.0);
-  hemi.intensity = 0.08 + dayAmount * 0.55;
-  hemi.color.setHSL(0.58, 0.3, 0.1 + dayAmount * 0.7);
-  hemi.groundColor.setHSL(0.28, 0.3, 0.05 + dayAmount * 0.2);
-
-  // Moonlight: visible at night
-  moonLight.intensity = nightAmount * 0.35;
-
-  // Fog: darker at night
-  const fogR = THREE.MathUtils.lerp(0.04, 0.65, dayAmount);
-  const fogG = THREE.MathUtils.lerp(0.05, 0.78, dayAmount);
-  const fogB = THREE.MathUtils.lerp(0.10, 0.87, dayAmount);
-  scene.fog.color.setRGB(fogR, fogG, fogB);
-
-  // Campfire: brighter glow at night
-  const fireBoost = 1 + nightAmount * 2.5;
-  const curFireInt = (1.6 + Math.sin(t*13)*0.3 + Math.sin(t*29+1.7)*0.25) * fireBoost;
+  // Campfire flicker (fixed day settings)
+  const curFireInt = 1.6 + Math.sin(t*13)*0.3 + Math.sin(t*29+1.7)*0.25;
   fireLight.intensity = curFireInt;
-  fireLight.distance = 28 + nightAmount * 40;
-  glow.scale.setScalar(6 + nightAmount * 8);
+  fireLight.distance = 28;
+  glow.scale.setScalar(6);
   waterUniforms.fireIntensity.value = curFireInt;
 
 
